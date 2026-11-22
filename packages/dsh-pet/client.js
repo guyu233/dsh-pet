@@ -83,6 +83,7 @@ window.__ModuleLoader__.load({
     // resolved there, not read inside a render callback.
     let petNs
 
+    let mountError = ''
     async function mountPet(ctx) {
       const remote = ctx.get('remote') ?? ctx.remote
       if (!remote || typeof remote.$mount !== 'function') {
@@ -94,6 +95,7 @@ window.__ModuleLoader__.load({
         throw new Error('remote.pet did not mount')
       }
       petNs = ns
+      mountError = ''
     }
 
     function ok(result) {
@@ -108,14 +110,31 @@ window.__ModuleLoader__.load({
       return (entry?.assetBase || ASSET_BASE) + String(ref).replace(/^\/+/, '')
     }
 
-    /* ---------- theme-token-only UI primitives ---------- */
+    /* ---------- UI primitives ----------
+     * Use only tokens observed in the installed Harness, each with a
+     * hardcoded fallback so a missing token degrades to a usable control
+     * instead of collapsing into plain text. `currentColor` keeps controls
+     * readable in both light and dark themes.
+     */
+    const T = {
+      text: 'var(--dsw-alias-label-primary, #1f2329)',
+      text2: 'var(--dsw-alias-label-secondary, #6b7280)',
+      accent: 'var(--dsw-alias-state-business-primary, #4d6bfe)',
+      danger: 'var(--dsw-alias-state-danger, #e5484d)',
+      border: 'var(--dsw-alias-border-primary, rgba(128,128,128,0.45))',
+      surface: 'var(--dsw-alias-bg-secondary, rgba(128,128,128,0.08))',
+      field: 'var(--dsw-alias-bg-primary, rgba(128,128,128,0.12))',
+      hover: 'var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.18))',
+      active: 'var(--dsw-alias-interactive-bg-active, rgba(128,128,128,0.28))',
+      radius: 'var(--dsw-radius-sm, 6px)',
+    }
 
     function Card({ children }) {
       return h('section', {
         style: {
-          background: 'var(--dsw-alias-bg-secondary)',
-          border: '1px solid var(--dsw-alias-border-primary)',
-          borderRadius: 'var(--dsw-radius-md)',
+          background: T.surface,
+          border: `1px solid ${T.border}`,
+          borderRadius: T.radius,
           padding: 16,
         },
       }, children)
@@ -124,8 +143,8 @@ window.__ModuleLoader__.load({
     function Row({ title, hint, children }) {
       return h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' } },
         h('div', { style: { flex: 1, minWidth: 0 } },
-          h('div', { style: { color: 'var(--dsw-alias-label-primary)', fontSize: 14 } }, title),
-          hint ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12, marginTop: 2 } }, hint) : null,
+          h('div', { style: { color: T.text, fontSize: 14 } }, title),
+          hint ? h('div', { style: { color: T.text2, fontSize: 12, marginTop: 2 } }, hint) : null,
         ),
         children,
       )
@@ -136,12 +155,14 @@ window.__ModuleLoader__.load({
       return h('button', {
         type: 'button', onClick, disabled,
         style: {
+          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
           cursor: disabled ? 'default' : 'pointer',
-          border: primary ? '1px solid var(--dsw-alias-state-business-primary)' : '1px solid var(--dsw-alias-border-primary)',
-          borderRadius: 'var(--dsw-radius-sm)',
-          background: primary ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-interactive-bg)',
-          color: primary ? 'var(--dsw-alias-text-on-accent)' : 'var(--dsw-alias-label-primary)',
-          padding: '5px 12px', fontSize: 13, opacity: disabled ? 0.5 : 1,
+          border: `1px solid ${primary ? T.accent : T.border}`,
+          borderRadius: T.radius,
+          background: primary ? T.accent : T.field,
+          color: primary ? '#fff' : T.text,
+          padding: '5px 12px', fontSize: 13, lineHeight: '18px',
+          opacity: disabled ? 0.5 : 1,
         },
       }, children)
     }
@@ -151,13 +172,13 @@ window.__ModuleLoader__.load({
         type: 'button', role: 'switch', 'aria-checked': checked ? 'true' : 'false', 'aria-label': label,
         onClick: () => onChange(!checked),
         style: {
-          width: 40, height: 22, borderRadius: 11, border: 'none', padding: 2, cursor: 'pointer',
-          background: checked ? 'var(--dsw-alias-state-business-primary)' : 'var(--dsw-alias-border-primary)',
+          width: 40, height: 22, borderRadius: 11, border: `1px solid ${T.border}`, padding: 2, cursor: 'pointer',
+          background: checked ? T.accent : T.field,
         },
       }, h('span', {
         style: {
           display: 'block', width: 18, height: 18, borderRadius: '50%',
-          background: 'var(--dsw-alias-label-primary)',
+          background: checked ? '#fff' : T.text,
           transform: checked ? 'translateX(18px)' : 'translateX(0)', transition: 'transform 120ms ease',
         },
       }))
@@ -169,10 +190,10 @@ window.__ModuleLoader__.load({
         onChange: e => onChange(Number(e.target.value)),
         style: {
           width: 72, padding: '4px 8px',
-          border: '1px solid var(--dsw-alias-border-primary)',
-          borderRadius: 'var(--dsw-radius-sm)',
-          background: 'var(--dsw-alias-bg-primary)',
-          color: 'var(--dsw-alias-label-primary)',
+          border: `1px solid ${T.border}`,
+          borderRadius: T.radius,
+          background: T.field,
+          color: T.text,
         },
       })
     }
@@ -245,19 +266,37 @@ window.__ModuleLoader__.load({
         setOpacity(Number(pet.status.opacity) || 85)
       }, [pet.status])
 
-      async function run(label, fn) {
+      const ready = Boolean(petNs) && !mountError
+
+      async function run(label, fn, after) {
         setBusy(label); setMsg('')
-        try { ok(await fn()); await pet.refresh() }
-        catch (e) { setMsg(String(e?.message || e)) }
-        finally { setBusy('') }
+        try {
+          if (!ready) throw new Error(mountError || t('notReady'))
+          const result = ok(await fn())
+          if (after) after(result)
+          await pet.refresh()
+          return result
+        } catch (e) {
+          setMsg(String(e?.message || e))
+          return undefined
+        } finally { setBusy('') }
       }
 
       async function save() {
         await run('save', () => petNs.setConfig(enabled, petSlug, scale, opacity))
       }
 
+      // "Use": activate a pet immediately (persist + start) and reflect it in UI.
+      async function usePet(slug) {
+        setPetSlug(slug); setEnabled(true)
+        await run('use:' + slug, () => petNs.setConfig(true, slug, scale, opacity))
+      }
+
+      // "Download": show a clear in-progress state, then auto-activate on success.
       async function download(p) {
-        await run(p.slug, () => petNs.download(p.slug, p.spriteUrl))
+        await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl), () => {
+          setMsg(t('downloadDone', { name: p.displayName }))
+        })
       }
 
       async function remove(slug) {
@@ -269,7 +308,7 @@ window.__ModuleLoader__.load({
         style: {
           imageRendering: 'pixelated', objectFit: 'contain',
           borderRadius: 4, flexShrink: 0,
-          background: 'var(--dsw-alias-bg-tertiary)',
+          background: T.field,
         },
         onError: (e) => { e.currentTarget.style.visibility = 'hidden' },
       })
@@ -283,8 +322,20 @@ window.__ModuleLoader__.load({
         : catalog.pets
 
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 } },
+        !ready ? h('div', {
+          style: {
+            padding: '8px 12px', color: T.danger, fontSize: 13,
+            border: `1px solid ${T.danger}`, borderRadius: T.radius,
+          },
+        }, t('notReady') + (mountError ? ': ' + mountError : '')) : null,
+        msg ? h('div', {
+          style: {
+            padding: '6px 12px', color: T.text, fontSize: 13,
+            background: T.field, borderRadius: T.radius,
+          },
+        }, msg) : null,
         h(Card, null,
-          h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: 'var(--dsw-alias-label-primary)' } }, t('title')),
+          h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: T.text } }, t('title')),
           h(Row, { title: t('enabled'), hint: t('enabledHint') },
             h(Switch, { checked: enabled, onChange: setEnabled, label: t('enabled') }),
           ),
@@ -294,10 +345,10 @@ window.__ModuleLoader__.load({
               onChange: e => setPetSlug(e.target.value.trim()),
               style: {
                 width: 160, padding: '5px 8px',
-                border: '1px solid var(--dsw-alias-border-primary)',
-                borderRadius: 'var(--dsw-radius-sm)',
-                background: 'var(--dsw-alias-bg-primary)',
-                color: 'var(--dsw-alias-label-primary)',
+                border: `1px solid ${T.border}`,
+                borderRadius: T.radius,
+                background: T.field,
+                color: T.text,
               },
             }),
           ),
@@ -305,20 +356,20 @@ window.__ModuleLoader__.load({
           h(Row, { title: t('opacity') }, h(NumberField, { value: opacity, min: 20, max: 100, onChange: setOpacity })),
           h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 } },
             h(Button, { onClick: () => void save(), disabled: !!busy, tone: 'primary' }, t('save')),
-            h('span', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } },
+            h('span', { style: { color: T.text2, fontSize: 12 } },
               msg || (pet.status ? (pet.status.running ? t('statusRunning') : t('statusStopped')) : '')),
           ),
-          pet.error ? h('div', { style: { color: 'var(--dsw-alias-state-danger)', fontSize: 12 } }, pet.error) : null,
+          pet.error ? h('div', { style: { color: T.danger, fontSize: 12 } }, pet.error) : null,
         ),
 
         h(Card, null,
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('h3', { style: { margin: 0, fontSize: 16, color: 'var(--dsw-alias-label-primary)' } }, t('installed')),
+            h('h3', { style: { margin: 0, fontSize: 16, color: T.text } }, t('installed')),
             h(Button, { onClick: () => void pet.refresh() }, t('refresh')),
           ),
-          h('p', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('installedHint')),
+          h('p', { style: { color: T.text2, fontSize: 12 } }, t('installedHint')),
           (pet.status?.installed || []).length === 0
-            ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 13 } }, t('empty'))
+            ? h('div', { style: { color: T.text2, fontSize: 13 } }, t('empty'))
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
               pet.status.installed.map(slug => h(Row, {
                 key: slug,
@@ -326,11 +377,15 @@ window.__ModuleLoader__.load({
                 hint: slug === pet.status.active ? t('active') : '',
               },
                 h('div', { style: { display: 'flex', gap: 6 } },
-                  h(Button, { onClick: () => { setPetSlug(slug); setEnabled(true) } }, t('use')),
+                  h(Button, {
+                    onClick: () => void usePet(slug),
+                    disabled: !ready || busy === 'use:' + slug,
+                    tone: slug === pet.status.active ? 'primary' : undefined,
+                  }, t('use')),
                   h(Button, {
                     onClick: () => void remove(slug),
-                    disabled: busy === 'remove:' + slug || slug === pet.status.active,
-                  }, t('remove')),
+                    disabled: !ready || busy === 'remove:' + slug || slug === pet.status.active,
+                  }, busy === 'remove:' + slug ? t('loading') : t('remove')),
                 ),
               )),
             ),
@@ -338,10 +393,10 @@ window.__ModuleLoader__.load({
 
         h(Card, null,
           h('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
-            h('h3', { style: { margin: 0, fontSize: 16, color: 'var(--dsw-alias-label-primary)' } }, t('catalog')),
+            h('h3', { style: { margin: 0, fontSize: 16, color: T.text } }, t('catalog')),
             h(Button, { onClick: () => catalog.reload() }, t('refresh')),
           ),
-          h('p', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('catalogHint')),
+          h('p', { style: { color: T.text2, fontSize: 12 } }, t('catalogHint')),
           h('input', {
             value: query,
             onChange: e => setQuery(e.target.value),
@@ -349,20 +404,20 @@ window.__ModuleLoader__.load({
             'aria-label': t('searchPlaceholder'),
             style: {
               width: '100%', boxSizing: 'border-box', padding: '6px 10px', marginBottom: 8,
-              border: '1px solid var(--dsw-alias-border-primary)',
-              borderRadius: 'var(--dsw-radius-sm)',
-              background: 'var(--dsw-alias-bg-primary)',
-              color: 'var(--dsw-alias-label-primary)',
+              border: `1px solid ${T.border}`,
+              borderRadius: T.radius,
+              background: T.field,
+              color: T.text,
               fontSize: 13,
             },
           }),
           !catalog.loading && !catalog.error
-            ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginBottom: 6 } },
+            ? h('div', { style: { color: T.text2, fontSize: 11, marginBottom: 6 } },
                 t('resultCount', { count: filtered.length }))
             : null,
           catalog.loading ? h('div', null, t('loading'))
-            : catalog.error ? h('div', { style: { color: 'var(--dsw-alias-state-danger)' } }, catalog.error)
-            : filtered.length === 0 ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 13 } }, t('empty'))
+            : catalog.error ? h('div', { style: { color: T.danger } }, catalog.error)
+            : filtered.length === 0 ? h('div', { style: { color: T.text2, fontSize: 13 } }, t('empty'))
             : h('div', {
               style: {
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
@@ -373,21 +428,24 @@ window.__ModuleLoader__.load({
                 key: p.slug,
                 style: {
                   display: 'flex', alignItems: 'center', gap: 10, padding: 8,
-                  border: '1px solid var(--dsw-alias-border-primary)', borderRadius: 'var(--dsw-radius-sm)',
+                  border: `1px solid ${T.border}`, borderRadius: T.radius,
                 },
               },
                 thumb(p.thumbUrl),
                 h('div', { style: { flex: 1, minWidth: 0 } },
                   h('div', {
-                    style: { color: 'var(--dsw-alias-label-primary)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                    style: { color: T.text, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
                   }, p.displayName),
-                  h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11 } },
+                  h('div', { style: { color: T.text2, fontSize: 11 } },
                     p.slug, ' · v', p.spriteVersionNumber),
                 ),
-                h(Button, { onClick: () => void download(p), disabled: busy === p.slug },
-                  busy === p.slug ? t('loading') : t('download')),
                 h(Button, {
-                  onClick: () => { setPetSlug(p.slug); setEnabled(true) },
+                  onClick: () => void download(p),
+                  disabled: !ready || busy === 'download:' + p.slug,
+                }, busy === 'download:' + p.slug ? t('downloading') : t('download')),
+                h(Button, {
+                  onClick: () => void usePet(p.slug),
+                  disabled: !ready || busy === 'use:' + p.slug,
                   tone: petSlug === p.slug ? 'primary' : undefined,
                 }, petSlug === p.slug ? t('active') : t('use')),
               ),
@@ -395,13 +453,13 @@ window.__ModuleLoader__.load({
         ),
 
         h(Card, null,
-          h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: 'var(--dsw-alias-label-primary)' } }, t('message')),
-          h('p', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('messageHint')),
+          h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: T.text } }, t('message')),
+          h('p', { style: { color: T.text2, fontSize: 12 } }, t('messageHint')),
           h(MessageBar, { t }),
         ),
 
         pet.status?.nativeMissing ? h('div', {
-          style: { color: 'var(--dsw-alias-state-danger)', fontSize: 12 },
+          style: { color: T.danger, fontSize: 12 },
         }, t('nativeMissing')) : null,
       )
     }
@@ -471,19 +529,19 @@ window.__ModuleLoader__.load({
       const active = sessions.find(s => s.sessionId === sessionId)
       const selectStyle = {
         padding: '4px 8px',
-        border: '1px solid var(--dsw-alias-border-primary)',
-        borderRadius: 'var(--dsw-radius-sm)',
-        background: 'var(--dsw-alias-bg-primary)',
-        color: 'var(--dsw-alias-label-primary)',
+        border: `1px solid ${T.border}`,
+        borderRadius: T.radius,
+        background: T.field,
+        color: T.text,
         fontSize: 12,
         maxWidth: compact ? 140 : 220,
       }
       const inputStyle = {
         flex: 1, minWidth: 0, padding: '5px 8px',
-        border: '1px solid var(--dsw-alias-border-primary)',
-        borderRadius: 'var(--dsw-radius-sm)',
-        background: 'var(--dsw-alias-bg-primary)',
-        color: 'var(--dsw-alias-label-primary)',
+        border: `1px solid ${T.border}`,
+        borderRadius: T.radius,
+        background: T.field,
+        color: T.text,
         fontSize: 13,
       }
 
@@ -522,14 +580,14 @@ window.__ModuleLoader__.load({
         bubble ? h('div', {
           style: {
             marginTop: 4, padding: '4px 8px', fontSize: 12,
-            color: 'var(--dsw-alias-label-primary)',
-            background: 'var(--dsw-alias-bg-tertiary)',
-            borderRadius: 'var(--dsw-radius-sm)',
-            borderLeft: '2px solid var(--dsw-alias-state-business-primary)',
+            color: T.text,
+            background: T.field,
+            borderRadius: T.radius,
+            borderLeft: `2px solid ${T.accent}`,
           },
         }, bubble) : null,
-        msg ? h('div', { style: { color: 'var(--dsw-alias-state-danger)', fontSize: 11 } }, msg) : null,
-        error ? h('div', { style: { color: 'var(--dsw-alias-state-danger)', fontSize: 11 } }, error) : null,
+        msg ? h('div', { style: { color: T.danger, fontSize: 11 } }, msg) : null,
+        error ? h('div', { style: { color: T.danger, fontSize: 11 } }, error) : null,
       )
     }
 
@@ -557,6 +615,9 @@ window.__ModuleLoader__.load({
             sendMessage: 'Send', stopMessage: 'Stop',
             searchPlaceholder: 'Search pets by name, slug, author, kind...',
             resultCount: '{count} pets',
+            notReady: 'The Host bridge is not ready. Confirm the plugin row is enabled and the Host half loaded.',
+            downloading: 'Downloading...',
+            downloadDone: 'Downloaded {name}. You can now use it.',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -578,12 +639,20 @@ window.__ModuleLoader__.load({
             sendMessage: '发送', stopMessage: '停止',
             searchPlaceholder: '按名称、slug、作者、类型搜索宠物…',
             resultCount: '共 {count} 只宠物',
+            notReady: 'Host 桥接尚未就绪。请确认插件行已启用且 Host 半身已加载。',
+            downloading: '下载中…',
+            downloadDone: '已下载 {name}，现在可以使用了。',
           },
         }), 'dsh-pet: locale')
 
         const t = ctx.locale.bind(NS)
 
-        try { await mountPet(ctx) } catch { /* UI shows the error from state refresh */ }
+        try {
+          await mountPet(ctx)
+        } catch (e) {
+          mountError = String(e?.message || e)
+          ctx.logger?.warn('dsh-pet: remote mount failed: %s', mountError)
+        }
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: 'dsh-pet', order: 30,
