@@ -88,6 +88,7 @@ typedef struct {
   DWORD parentPid;
   HANDLE parentHandle;
   HANDLE stdinThread;
+  wchar_t lockPath[MAX_PATH];
   int dragging;
   POINT dragOrigin;       /* cursor screen pos at mouse-down */
   RECT windowOrigin;      /* window rect at mouse-down */
@@ -323,6 +324,21 @@ static int parentAlive(void) {
   return WaitForSingleObject(g.parentHandle, 0) != WAIT_OBJECT_0;
 }
 
+/* True while this instance's PID is still the one in the lock file.
+ * A newer instance overwrites it, which makes older instances exit. */
+static int isCurrentInstance(void) {
+  if (!g.lockPath[0]) return 1;
+  HANDLE f = CreateFileW(g.lockPath, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+  if (f == INVALID_HANDLE_VALUE) return 0;  // lock removed -> a shutdown was requested
+  char buf[32] = { 0 };
+  DWORD read = 0;
+  ReadFile(f, buf, sizeof(buf) - 1, &read, NULL);
+  CloseHandle(f);
+  unsigned long pid = strtoul(buf, NULL, 10);
+  return pid == (unsigned long)GetCurrentProcessId();
+}
+
 static void parseArgs(int argc, wchar_t **argv) {
   for (int i = 1; i < argc - 1; i++) {
     if (wcscmp(argv[i], L"--pet-dir") == 0) {
@@ -345,6 +361,25 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
   (void)hPrev; (void)cmd; (void)nCmdShow;
   parseArgs(__argc, __wargv);
   if (!g.petDir[0]) fail(L"Missing --pet-dir");
+
+  // Single-instance handover via a PID lock file (equivalent of Petdex's
+  // flock). A new instance writes its PID; older instances notice their PID
+  // is no longer in the file and exit. This guarantees no stacked pets after
+  // reloads/reinstalls.
+  {
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    swprintf(g.lockPath, MAX_PATH, L"%s\\dsh-pet.lock", tmp);
+    HANDLE f = CreateFileW(g.lockPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f) {
+      char pidbuf[32];
+      int n = snprintf(pidbuf, sizeof(pidbuf), "%lu", (unsigned long)GetCurrentProcessId());
+      DWORD written = 0;
+      WriteFile(f, pidbuf, (DWORD)n, &written, NULL);
+      CloseHandle(f);
+    }
+  }
 
   if (!loadAtlas(g.petDir)) fail(L"Could not decode the pet spritesheet (WebP/PNG).");
 
@@ -393,11 +428,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     } else {
-      if (!parentAlive()) {
+      // Exit if the Harness parent is gone OR a newer pet instance took over.
+      if (!parentAlive() || !isCurrentInstance()) {
         PostQuitMessage(0);
         break;
       }
-      Sleep(200);   /* idle: parent liveness check only, ~0 CPU */
+      Sleep(200);   /* idle: liveness + single-instance checks, ~0 CPU */
     }
   }
 

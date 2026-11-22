@@ -49,6 +49,7 @@
     "attribution": "Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station).",
     "following": "Following session",
     "noSession": "No active session yet",
-    "petsDir": "Local pets directory"
+    "petsDir": "Local pets directory",
+    "installedShort": "Installed"
   }
 }

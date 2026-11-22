@@ -151,11 +151,18 @@ export default class PetRemoteService extends Service {
 
   _cfg() {
     const c = this.config
+    const rawSlug = this.overrides.petSlug ?? (c.petSlug?.get?.() ?? c.petSlug)
+    const slug = safeSlug(rawSlug) || 'boba'
+    const num = (v, fallback, lo, hi) => {
+      const n = typeof v === 'object' && v && typeof v.get === 'function' ? v.get() : v
+      const x = Number(n)
+      return Number.isFinite(x) && x >= lo && x <= hi ? x : fallback
+    }
     return {
       enabled: asBool(this.overrides.enabled ?? (c.enabled?.get?.() ?? c.enabled)),
-      petSlug: this.overrides.petSlug ?? (c.petSlug?.get?.() ?? c.petSlug),
-      scale: this.overrides.scale ?? (c.scale?.get?.() ?? c.scale),
-      opacity: this.overrides.opacity ?? (c.opacity?.get?.() ?? c.opacity),
+      petSlug: slug,
+      scale: num(this.overrides.scale ?? c.scale, 100, 50, 300),
+      opacity: num(this.overrides.opacity ?? c.opacity, 85, 20, 100),
     }
   }
 
@@ -401,7 +408,7 @@ export default class PetRemoteService extends Service {
         source: `https://petdex.dev/pets/${safe}`,
       }, null, 2))
       this.downloadProgress = null
-      return { ok: true }
+      return { ok: true, slug: safe, dir }
     } catch (error) {
       this.downloadProgress = null
       return { ok: false, error: String(error?.message ?? error) }

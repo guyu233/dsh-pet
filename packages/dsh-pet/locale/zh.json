@@ -49,6 +49,7 @@
     "attribution": "非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。",
     "following": "正在跟随会话",
     "noSession": "暂无活跃会话",
-    "petsDir": "本地宠物目录"
+    "petsDir": "本地宠物目录",
+    "installedShort": "已安装"
   }
 }

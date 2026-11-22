@@ -376,14 +376,17 @@ window.__ModuleLoader__.load({
         await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl, {
           displayName: p.displayName, kind: p.kind,
           submittedBy: p.submittedBy, spriteVersionNumber: p.spriteVersionNumber,
-        }), () => {
-          setMsg(t('downloadDone', { name: p.displayName }))
+        }), (result) => {
+          setMsg(t('downloadDone', { name: p.displayName }) + (result?.dir ? ' (' + result.dir + ')' : ''))
         })
       }
 
       async function uninstall(slug) {
         await run('uninstall:' + slug, () => petNs.uninstall(slug))
       }
+
+      // Set of installed slugs for per-card button state.
+      const installed = new Set(pet.status?.installed || [])
 
       // Fuzzy-ish search: split into tokens (AND), each token matches any
       // field as a substring. Petdex's server does ILIKE + embeddings; the
@@ -457,7 +460,17 @@ window.__ModuleLoader__.load({
         h(Card, null,
           h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: T.text } }, t('title')),
           h(Row, { title: t('enabled'), hint: t('enabledHint') },
-            h(Switch, { checked: enabled, onChange: setEnabled, label: t('enabled') }),
+            h(Switch, {
+              checked: enabled,
+              disabled: !ready || !!busy,
+              label: t('enabled'),
+              onChange: (next) => {
+                // Enable/disable must take effect immediately: the switch is
+                // the primary control, not just a draft value behind Save.
+                setEnabled(next)
+                void run('toggle', () => petNs.setConfig(next, petSlug, scale, opacity))
+              },
+            }),
           ),
           h(Row, { title: t('petSlug'), hint: t('petSlugHint') },
             h('input', {
@@ -568,8 +581,8 @@ window.__ModuleLoader__.load({
                   ),
                   h(Button, {
                     onClick: () => void download(p),
-                    disabled: !ready || isDl,
-                  }, isDl ? t('downloading') : t('download')),
+                    disabled: !ready || isDl || installed.has(p.slug),
+                  }, isDl ? t('downloading') : installed.has(p.slug) ? t('installedShort') : t('download')),
                   h(Button, {
                     onClick: () => void usePet(p.slug),
                     disabled: !ready || busy === 'use:' + p.slug,
@@ -743,7 +756,7 @@ window.__ModuleLoader__.load({
             homepage: 'Petdex.dev', homepageHint: 'Browse the full gallery and create pets on the official site.',
             attribution: 'Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station).',
             following: 'Following session', noSession: 'No active session yet',
-            petsDir: 'Local pets directory',
+            petsDir: 'Local pets directory', installedShort: 'Installed',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -771,7 +784,7 @@ window.__ModuleLoader__.load({
             homepage: 'Petdex.dev 官网', homepageHint: '在官网浏览完整图鉴、制作宠物。',
             attribution: '非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。',
             following: '正在跟随会话', noSession: '暂无活跃会话',
-            petsDir: '本地宠物目录',
+            petsDir: '本地宠物目录', installedShort: '已安装',
           },
         }), 'dsh-pet: locale')
 
