@@ -554,10 +554,15 @@ window.__ModuleLoader__.load({
           name: 'settings.section.icon', id: 'dsh-pet', locale: NS,
         }, ({ size }) => h('svg', {
           width: size, height: size, viewBox: '0 0 16 16', 'aria-hidden': true,
+          fill: 'none', stroke: 'currentColor', strokeWidth: 1.2,
+          strokeLinecap: 'round', strokeLinejoin: 'round',
         },
-          h('rect', { x: 2, y: 2, width: 12, height: 12, rx: 3, fill: 'currentColor', opacity: 0.9 }),
-          h('circle', { cx: 6, cy: 7, r: 1.1, fill: '#1f2430' }),
-          h('circle', { cx: 10, cy: 7, r: 1.1, fill: '#1f2430' }),
+          // cat head: two ears + rounded face, stroked so it reads in both themes
+          h('path', { d: 'M3 5.2 L2.7 2.4 L5.4 4.4 M13 5.2 L13.3 2.4 L10.6 4.4' }),
+          h('path', { d: 'M8 4.2 C4.9 4.2 3 6 3 8.4 C3 11.2 4.9 13 8 13 C11.1 13 13 11.2 13 8.4 C13 6 11.1 4.2 8 4.2 Z' }),
+          h('circle', { cx: 6, cy: 8.4, r: 0.75, fill: 'currentColor', stroke: 'none' }),
+          h('circle', { cx: 10, cy: 8.4, r: 0.75, fill: 'currentColor', stroke: 'none' }),
+          h('path', { d: 'M6.9 10.6 Q8 11.4 9.1 10.6' }),
         )))
       },
     }
