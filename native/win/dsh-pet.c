@@ -14,8 +14,12 @@
  *   - WM_CLOSE / WM_DESTROY
  */
 
+#ifndef UNICODE
 #define UNICODE
+#endif
+#ifndef _UNICODE
 #define _UNICODE
+#endif
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -258,7 +262,7 @@ static void parseArgs(int argc, wchar_t **argv) {
     }
   }
   const wchar_t *ppid = _wgetenv(L"DSH_PET_PARENT_PID");
-  if (ppid) g.parentPid = (DWORD)_wtoui64(ppid, NULL, 10);
+  if (ppid) g.parentPid = (DWORD)_wcstoui64(ppid, NULL, 10);
 }
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
