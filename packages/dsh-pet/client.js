@@ -371,14 +371,18 @@ window.__ModuleLoader__.load({
         await run('use:' + slug, () => petNs.setConfig(true, slug, scale, opacity))
       }
 
-      // "Download": show a clear in-progress state, then auto-activate on success.
+      // "Download": show progress, then automatically activate the new pet —
+      // downloading alone left the old (possibly missing) pet active, which
+      // made the enable switch appear to do nothing.
       async function download(p) {
-        await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl, {
+        const result = await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl, {
           displayName: p.displayName, kind: p.kind,
           submittedBy: p.submittedBy, spriteVersionNumber: p.spriteVersionNumber,
-        }), (result) => {
-          setMsg(t('downloadDone', { name: p.displayName }) + (result?.dir ? ' (' + result.dir + ')' : ''))
-        })
+        }))
+        if (result?.ok === false) return
+        setPetSlug(p.slug); setEnabled(true)
+        await run('use:' + p.slug, () => petNs.setConfig(true, p.slug, scale, opacity))
+        setMsg(t('downloadDone', { name: p.displayName }))
       }
 
       async function uninstall(slug) {
@@ -492,7 +496,9 @@ window.__ModuleLoader__.load({
             h('span', { style: { color: T.text2, fontSize: 12 } },
               msg || (pet.status ? (pet.status.running ? t('statusRunning') : t('statusStopped')) : '')),
           ),
-          pet.error ? h('div', { style: { color: T.danger, fontSize: 12 } }, pet.error) : null,
+          pet.error || pet.status?.lastError
+            ? h('div', { style: { color: T.danger, fontSize: 12 } }, pet.error || pet.status.lastError)
+            : null,
         ),
 
         h(Card, null,

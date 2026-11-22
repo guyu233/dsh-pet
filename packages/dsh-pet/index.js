@@ -100,6 +100,11 @@ export default class PetRemoteService extends Service {
     this.generation = 0
     this.lastBubble = { text: '', at: 0 }
     this.downloadProgress = null   // { slug, phase, pct }
+    this.lastError = ''            // surfaced in state() for the settings UI
+    // In-memory record of pets downloaded this session. Filesystem reads can
+    // lag or be sandboxed; merging this set guarantees a just-downloaded pet
+    // immediately appears in the installed list.
+    this.installedCache = new Set()
     this.typertRemote = bindTypertRemote(this, 'pet', { namespace: 'pet' })
 
     // State source: the global `agent/*` events that ctx.on can actually see.
@@ -253,20 +258,32 @@ export default class PetRemoteService extends Service {
 
   async _start() {
     this._stop()
+    this.lastError = ''
     const values = this._cfg()
     // Hard guard: never show a pet while the enable switch is off. This is
     // the last line of defence against stale config or schema-descriptor values.
     if (!values.enabled) return
     const binary = nativeBinary()
     if (!binary || !existsSync(binary)) {
-      this.ctx.logger.warn('dsh-pet: native binary missing for %s/%s', osPlatform(), osArch())
+      this.lastError = `native binary missing for ${osPlatform()}/${osArch()}`
+      this.ctx.logger.warn('dsh-pet: %s', this.lastError)
       return
+    }
+    // If the configured pet was never downloaded, fall back to the first
+    // installed pet so the enable switch actually shows something.
+    if (!existsSync(petDir(values.petSlug))) {
+      const installed = this._installed()
+      if (installed.length > 0) {
+        this.ctx.logger.warn('dsh-pet: pet "%s" missing, falling back to "%s"', values.petSlug, installed[0])
+        this.overrides.petSlug = installed[0]
+        values.petSlug = installed[0]
+      } else {
+        this.lastError = 'no pets installed yet; download one first'
+        this.ctx.logger.warn('dsh-pet: %s', this.lastError)
+        return
+      }
     }
     const dir = petDir(values.petSlug)
-    if (!existsSync(dir)) {
-      this.ctx.logger.warn('dsh-pet: pet "%s" is not downloaded yet', values.petSlug)
-      return
-    }
     const subprocess = this.ctx.get('subprocess')
     if (!subprocess) {
       this.ctx.logger.warn('dsh-pet: ctx.subprocess is unavailable in this profile')
@@ -288,7 +305,8 @@ export default class PetRemoteService extends Service {
         if (this.generation === myGeneration) this.handle = null
       })
     } catch (error) {
-      this.ctx.logger.warn('dsh-pet: failed to start native pet: %s', error?.message ?? error)
+      this.lastError = String(error?.message ?? error)
+      this.ctx.logger.warn('dsh-pet: failed to start native pet: %s', this.lastError)
     }
   }
 
@@ -307,12 +325,20 @@ export default class PetRemoteService extends Service {
   }
 
   _installed() {
+    const found = new Set()
     const root = petRoot()
-    if (!existsSync(root)) return []
-    return readdirSync(root).filter(name => {
-      try { return statSync(join(root, name)).isDirectory() && safeSlug(name) !== null }
-      catch { return false }
-    })
+    if (existsSync(root)) {
+      try {
+        for (const name of readdirSync(root)) {
+          if (safeSlug(name) && statSync(join(root, name)).isDirectory()) found.add(name)
+        }
+      } catch (error) {
+        this.ctx.logger.warn('dsh-pet: could not list pets dir: %s', error?.message ?? error)
+      }
+    }
+    // Merge pets downloaded this session (filesystem may be sandboxed/lagging).
+    for (const slug of this.installedCache) if (safeSlug(slug)) found.add(slug)
+    return [...found].sort()
   }
 
   /* ---------------- Remote methods (JSON-safe, positional args) ---------------- */
@@ -333,6 +359,7 @@ export default class PetRemoteService extends Service {
       lastBubble: Date.now() - this.lastBubble.at < 10000 ? this.lastBubble.text : '',
       downloadProgress: this.downloadProgress,
       petsDir: petRoot(),
+      lastError: this.lastError,
     }
   }
 
@@ -435,6 +462,7 @@ export default class PetRemoteService extends Service {
         source: `https://petdex.dev/pets/${safe}`,
       }, null, 2))
       this.downloadProgress = null
+      this.installedCache.add(safe)
       return { ok: true, slug: safe, dir }
     } catch (error) {
       this.downloadProgress = null
@@ -452,6 +480,7 @@ export default class PetRemoteService extends Service {
       if (this._cfg().petSlug === safe) return { ok: false, error: 'cannot remove the active pet' }
       const dir = petDir(safe)
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+      this.installedCache.delete(safe)
       return { ok: true }
     } catch (error) {
       return { ok: false, error: String(error?.message ?? error) }
