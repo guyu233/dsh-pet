@@ -31,6 +31,15 @@
     "save": "Save changes",
     "discard": "Discard",
     "saved": "Saved",
-    "saveFailed": "Save failed"
+    "saveFailed": "Save failed",
+    "message": "Quick message",
+    "messageHint": "Send a message to a session from your desk pet.",
+    "session": "Session",
+    "selectSession": "Select a session",
+    "messagePlaceholder": "Type a message (Enter to send)",
+    "sendMessage": "Send",
+    "stopMessage": "Stop",
+    "searchPlaceholder": "Search pets by name, slug, author, kind...",
+    "resultCount": "{count} pets"
   }
 }

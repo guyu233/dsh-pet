@@ -213,6 +213,9 @@ window.__ModuleLoader__.load({
             submittedBy: p.submittedBy || '',
             spriteVersionNumber: p.spriteVersionNumber || 1,
             spriteUrl: assetUrl({ ...p, assetBase: base }),
+            // Petdex publishes a dedicated 80x80 single-frame thumbnail per
+            // pet; use it for the grid instead of cropping the full atlas.
+            thumbUrl: `${String(base || ASSET_BASE).replace(/\/+$/, '')}/pets/${p.slug}/thumb.webp`,
           })).filter(p => p.slug && p.spriteUrl.startsWith('https://'))
           setPets(list)
         } catch (e) {
@@ -232,6 +235,7 @@ window.__ModuleLoader__.load({
       const [scale, setScale] = useState(100)
       const [opacity, setOpacity] = useState(85)
       const [msg, setMsg] = useState('')
+      const [query, setQuery] = useState('')
 
       useEffect(() => {
         if (!pet.status) return
@@ -261,9 +265,22 @@ window.__ModuleLoader__.load({
       }
 
       const thumb = (url) => h('img', {
-        src: url, alt: '', width: 32, height: 34,
-        style: { imageRendering: 'pixelated', objectFit: 'cover', objectPosition: 'top left', borderRadius: 4, flexShrink: 0 },
+        src: url, alt: '', width: 32, height: 32,
+        style: {
+          imageRendering: 'pixelated', objectFit: 'contain',
+          borderRadius: 4, flexShrink: 0,
+          background: 'var(--dsw-alias-bg-tertiary)',
+        },
+        onError: (e) => { e.currentTarget.style.visibility = 'hidden' },
       })
+
+      // Case-insensitive fuzzy substring search over the useful fields.
+      const q = query.trim().toLowerCase()
+      const filtered = q
+        ? catalog.pets.filter(p =>
+            [p.slug, p.displayName, p.submittedBy, p.kind].some(v =>
+              String(v || '').toLowerCase().includes(q)))
+        : catalog.pets
 
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 } },
         h(Card, null,
@@ -325,14 +342,33 @@ window.__ModuleLoader__.load({
             h(Button, { onClick: () => catalog.reload() }, t('refresh')),
           ),
           h('p', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('catalogHint')),
+          h('input', {
+            value: query,
+            onChange: e => setQuery(e.target.value),
+            placeholder: t('searchPlaceholder'),
+            'aria-label': t('searchPlaceholder'),
+            style: {
+              width: '100%', boxSizing: 'border-box', padding: '6px 10px', marginBottom: 8,
+              border: '1px solid var(--dsw-alias-border-primary)',
+              borderRadius: 'var(--dsw-radius-sm)',
+              background: 'var(--dsw-alias-bg-primary)',
+              color: 'var(--dsw-alias-label-primary)',
+              fontSize: 13,
+            },
+          }),
+          !catalog.loading && !catalog.error
+            ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 11, marginBottom: 6 } },
+                t('resultCount', { count: filtered.length }))
+            : null,
           catalog.loading ? h('div', null, t('loading'))
             : catalog.error ? h('div', { style: { color: 'var(--dsw-alias-state-danger)' } }, catalog.error)
+            : filtered.length === 0 ? h('div', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 13 } }, t('empty'))
             : h('div', {
               style: {
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
                 gap: 8, maxHeight: 360, overflowY: 'auto',
               },
-            }, catalog.pets.slice(0, 60).map(p =>
+            }, filtered.slice(0, 120).map(p =>
               h('div', {
                 key: p.slug,
                 style: {
@@ -340,7 +376,7 @@ window.__ModuleLoader__.load({
                   border: '1px solid var(--dsw-alias-border-primary)', borderRadius: 'var(--dsw-radius-sm)',
                 },
               },
-                thumb(p.spriteUrl),
+                thumb(p.thumbUrl),
                 h('div', { style: { flex: 1, minWidth: 0 } },
                   h('div', {
                     style: { color: 'var(--dsw-alias-label-primary)', fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
@@ -519,6 +555,8 @@ window.__ModuleLoader__.load({
             session: 'Session', selectSession: 'Select a session',
             messagePlaceholder: 'Type a message (Enter to send)',
             sendMessage: 'Send', stopMessage: 'Stop',
+            searchPlaceholder: 'Search pets by name, slug, author, kind...',
+            resultCount: '{count} pets',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -538,6 +576,8 @@ window.__ModuleLoader__.load({
             session: '会话', selectSession: '选择会话',
             messagePlaceholder: '输入消息（回车发送）',
             sendMessage: '发送', stopMessage: '停止',
+            searchPlaceholder: '按名称、slug、作者、类型搜索宠物…',
+            resultCount: '共 {count} 只宠物',
           },
         }), 'dsh-pet: locale')
 

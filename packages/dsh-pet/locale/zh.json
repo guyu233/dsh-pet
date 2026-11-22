@@ -31,6 +31,15 @@
     "save": "保存更改",
     "discard": "放弃更改",
     "saved": "已保存",
-    "saveFailed": "保存失败"
+    "saveFailed": "保存失败",
+    "message": "快速消息",
+    "messageHint": "通过桌宠向某个会话发送消息。",
+    "session": "会话",
+    "selectSession": "选择会话",
+    "messagePlaceholder": "输入消息（回车发送）",
+    "sendMessage": "发送",
+    "stopMessage": "停止",
+    "searchPlaceholder": "按名称、slug、作者、类型搜索宠物…",
+    "resultCount": "共 {count} 只宠物"
   }
 }

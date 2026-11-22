@@ -58,6 +58,14 @@ const enKeys = Object.keys(en.pet ?? {}).sort()
 const zhKeys = Object.keys(zh.pet ?? {}).sort()
 check(JSON.stringify(enKeys) === JSON.stringify(zhKeys), 'en/zh locale keys match')
 
+// 4b. The inline dictionaries in client.js must cover every file locale key.
+// Check at least twice (en block + zh block) by counting `key:` occurrences.
+for (const key of enKeys) {
+  const re = new RegExp(`\\b${key}:`, 'g')
+  const hits = (client.match(re) ?? []).length
+  check(hits >= 2, `client.js inline dictionaries include '${key}' (en+zh)`)
+}
+
 // 5. Config fields vs patch config fields (no unknown keys)
 const cfgBlock = host.match(/export const Config = z\.object\(\{([\s\S]*?)\}\)/)?.[1] ?? ''
 const cfgFields = [...cfgBlock.matchAll(/^\s*(\w+):\s*z\./gm)].map(m => m[1])
