@@ -88,6 +88,9 @@ typedef struct {
   DWORD parentPid;
   HANDLE parentHandle;
   HANDLE stdinThread;
+  int dragging;
+  POINT dragOrigin;       /* cursor screen pos at mouse-down */
+  RECT windowOrigin;      /* window rect at mouse-down */
   volatile LONG quitting;
 } PetCtx;
 
@@ -250,6 +253,35 @@ static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       advanceFrame();
       drawFrame();
       return 0;
+    case WM_LBUTTONDOWN: {
+      g.dragging = 1;
+      g.dragOrigin.x = (int)(short)LOWORD(lp);
+      g.dragOrigin.y = (int)(short)HIWORD(lp);
+      ClientToScreen(hwnd, &g.dragOrigin);
+      GetWindowRect(hwnd, &g.windowOrigin);
+      SetCapture(hwnd);
+      return 0;
+    }
+    case WM_MOUSEMOVE:
+      if (g.dragging) {
+        POINT cur;
+        cur.x = (int)(short)LOWORD(lp);
+        cur.y = (int)(short)HIWORD(lp);
+        ClientToScreen(hwnd, &cur);
+        int nx = g.windowOrigin.left + (cur.x - g.dragOrigin.x);
+        int ny = g.windowOrigin.top + (cur.y - g.dragOrigin.y);
+        SetWindowPos(hwnd, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+      }
+      return 0;
+    case WM_LBUTTONUP:
+      if (g.dragging) {
+        g.dragging = 0;
+        ReleaseCapture();
+      }
+      return 0;
+    case WM_RBUTTONUP:
+      // Right-click could open a menu later; for now just ignore.
+      return 0;
     case WM_DESTROY:
       InterlockedExchange(&g.quitting, 1);
       PostQuitMessage(0);
@@ -328,7 +360,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
   makeScaledBitmap();
 
   g.hwnd = CreateWindowExW(
-    WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW,
+    WS_EX_LAYERED | WS_EX_TOOLWINDOW,   /* no WS_EX_TRANSPARENT: allow dragging */
     L"DshPetWindow", L"dsh-pet", WS_POPUP,
     0, 0, g.frameW, g.frameH, NULL, NULL, hInst, NULL);
   if (!g.hwnd) fail(L"Could not create pet window");

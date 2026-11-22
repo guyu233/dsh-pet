@@ -62,6 +62,7 @@ export default class PetRemoteService extends Service {
     this.toolTimer = null
     this.generation = 0
     this.lastBubble = { text: '', at: 0 }
+    this.downloadProgress = null   // { slug, phase, pct }
     this.typertRemote = bindTypertRemote(this, 'pet', { namespace: 'pet' })
 
     // Observe only events verified against the installed Harness and the
@@ -204,6 +205,8 @@ export default class PetRemoteService extends Service {
       installed: this._installed(),
       nativeMissing: !bin || !existsSync(bin),
       lastBubble: Date.now() - this.lastBubble.at < 10000 ? this.lastBubble.text : '',
+      downloadProgress: this.downloadProgress,
+      petsDir: petRoot(),
     }
   }
 
@@ -256,10 +259,34 @@ export default class PetRemoteService extends Service {
       }
       const dir = petDir(safe)
       mkdirSync(dir, { recursive: true })
+      this.downloadProgress = { slug: safe, phase: 'connecting', pct: 0 }
       const response = await fetch(url)
-      if (!response.ok) return { ok: false, error: `download ${response.status}` }
-      const bytes = Buffer.from(await response.arrayBuffer())
-      if (bytes.length > 20 * 1024 * 1024) return { ok: false, error: 'asset too large' }
+      if (!response.ok) {
+        this.downloadProgress = null
+        return { ok: false, error: `download ${response.status}` }
+      }
+      const total = Number(response.headers.get('content-length')) || 0
+      let received = 0
+      const chunks = []
+      if (response.body && typeof response.body.getReader === 'function') {
+        const reader = response.body.getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          chunks.push(Buffer.from(value))
+          received += value.byteLength
+          const pct = total ? Math.min(99, Math.round(received * 100 / total)) : Math.min(99, Math.round(received / 65536))
+          this.downloadProgress = { slug: safe, phase: 'downloading', pct, bytes: received, total }
+          if (received > 20 * 1024 * 1024) {
+            this.downloadProgress = null
+            return { ok: false, error: 'asset too large' }
+          }
+        }
+      } else {
+        chunks.push(Buffer.from(await response.arrayBuffer()))
+      }
+      const bytes = Buffer.concat(chunks)
+      this.downloadProgress = { slug: safe, phase: 'saving', pct: 100 }
       writeFileSync(join(dir, 'spritesheet.webp'), bytes)
       // Petdex-compatible pet.json: canonical field names so a downloaded
       // pack could be used by other Petdex tooling later. `meta` comes from
@@ -280,8 +307,10 @@ export default class PetRemoteService extends Service {
         spritesheet: 'spritesheet.webp',
         source: `https://petdex.dev/pets/${safe}`,
       }, null, 2))
+      this.downloadProgress = null
       return { ok: true }
     } catch (error) {
+      this.downloadProgress = null
       return { ok: false, error: String(error?.message ?? error) }
     }
   }
@@ -308,7 +337,32 @@ export default class PetRemoteService extends Service {
     return this.ctx.get('sessionController')
   }
 
-  /** List visible sessions for the bubble's session picker. */
+  /** Like Codex: follow the active session automatically — the running one,
+   * else the most recently active non-blank session. */
+  async _activeSession() {
+    const controller = this._controller()
+    if (!controller) return null
+    const value = await controller.list({}, new AbortController().signal)
+    const items = (value?.items ?? []).filter(s => !s.blank && s.agentAvailable !== false)
+    items.sort((a, b) => {
+      if (Boolean(a.running) !== Boolean(b.running)) return a.running ? -1 : 1
+      return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
+    })
+    if (items.length === 0) return null
+    return String(items[0].sessionId)
+  }
+
+  /** Current auto-followed session for the UI (no picker needed). */
+  async active() {
+    try {
+      const sessionId = await this._activeSession()
+      return { ok: true, sessionId: sessionId || '' }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
+  /** List visible sessions (kept for diagnostics; UI no longer needs a picker). */
   async sessions() {
     try {
       const controller = this._controller()
@@ -336,12 +390,14 @@ export default class PetRemoteService extends Service {
     try {
       this._requireTrustedCaller('send')
       const content = typeof text === 'string' ? text.trim() : ''
-      if (!sessionId || !content) return { ok: false, error: 'sessionId and text are required' }
+      if (!content) return { ok: false, error: 'text is required' }
+      const target = sessionId || (await this._activeSession())
+      if (!target) return { ok: false, error: 'no active session to send to' }
       const controller = this._controller()
       if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
       const value = await controller.prompt({
         requestId: randomUUID(),
-        sessionId,
+        sessionId: target,
         mode: 'queue',
         content: [{ type: 'text', text: content }],
       }, new AbortController().signal)
@@ -352,14 +408,15 @@ export default class PetRemoteService extends Service {
     }
   }
 
-  /** Cancel the active turn of a session (stop current message). */
-  stopSession(sessionId) {
+  /** Cancel the active turn (stop current message), auto-following session. */
+  async stopSession(sessionId) {
     try {
       this._requireTrustedCaller('stopSession')
-      if (!sessionId) return { ok: false, error: 'sessionId is required' }
+      const target = sessionId || (await this._activeSession())
+      if (!target) return { ok: false, error: 'no active session to stop' }
       const controller = this._controller()
       if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
-      const value = controller.cancel({ sessionId })
+      const value = controller.cancel({ sessionId: target })
       this._bubble('stopped')
       return { ok: Boolean(value?.accepted), error: value?.accepted ? undefined : 'cancel not accepted' }
     } catch (error) {
@@ -390,6 +447,7 @@ Object.defineProperty(PetRemoteService.prototype, REMOTE_METHOD_DESCRIPTOR, {
       { method: 'download', invocation: { kind: 'direct' } },
       { method: 'uninstall', invocation: { kind: 'direct' } },
       { method: 'sessions', invocation: { kind: 'direct' } },
+      { method: 'active', invocation: { kind: 'direct' } },
       { method: 'send', invocation: { kind: 'direct' } },
       { method: 'stopSession', invocation: { kind: 'direct' } },
     ],

@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
       }
     }
     const stringCodec = name => codec(`${name}:string`, v => typeof v === 'string')
+    const optionalStringCodec = name => codec(`${name}:optional-string`, v => v === undefined || typeof v === 'string')
     const boolCodec = name => codec(`${name}:boolean`, v => typeof v === 'boolean')
     const numberCodec = name => codec(`${name}:number`, v => typeof v === 'number' && Number.isFinite(v))
     const objectCodec = name => codec(`${name}:object`, v => v === undefined || (typeof v === 'object' && v !== null && !Array.isArray(v)))
@@ -73,11 +74,12 @@ window.__ModuleLoader__.load({
         ]),
         method('uninstall', [{ name: 'slug', codec: stringCodec('slug') }]),
         method('sessions'),
+        method('active'),
         method('send', [
-          { name: 'sessionId', codec: stringCodec('sessionId') },
+          { name: 'sessionId', codec: optionalStringCodec('sessionId') },
           { name: 'text', codec: stringCodec('text') },
         ]),
-        method('stopSession', [{ name: 'sessionId', codec: stringCodec('sessionId') }]),
+        method('stopSession', [{ name: 'sessionId', codec: optionalStringCodec('sessionId') }]),
       ]),
     })
 
@@ -303,6 +305,22 @@ window.__ModuleLoader__.load({
       const [opacity, setOpacity] = useState(85)
       const [msg, setMsg] = useState('')
       const [query, setQuery] = useState('')
+      const [progress, setProgress] = useState(null)
+
+      // While a download is in flight, poll Host progress frequently.
+      useEffect(() => {
+        if (!busy.startsWith('download:') || !petNs) { setProgress(null); return }
+        let alive = true
+        const poll = async () => {
+          try {
+            const s = ok(await petNs.state())
+            if (alive) setProgress(s?.downloadProgress || null)
+          } catch { /* keep last */ }
+        }
+        void poll()
+        const id = setInterval(poll, 400)
+        return () => { alive = false; clearInterval(id) }
+      }, [busy])
 
       useEffect(() => {
         if (!pet.status) return
@@ -470,6 +488,10 @@ window.__ModuleLoader__.load({
             h(Button, { onClick: () => void pet.refresh() }, t('refresh')),
           ),
           h('p', { style: { color: T.text2, fontSize: 12 } }, t('installedHint')),
+          pet.status?.petsDir
+            ? h('div', { style: { color: T.text2, fontSize: 11, marginBottom: 6, wordBreak: 'break-all' } },
+                t('petsDir') + ': ' + pet.status.petsDir)
+            : null,
           (pet.status?.installed || []).length === 0
             ? h('div', { style: { color: T.text2, fontSize: 13 } }, t('empty'))
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
@@ -525,33 +547,52 @@ window.__ModuleLoader__.load({
                 display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
                 gap: 8, maxHeight: 360, overflowY: 'auto',
               },
-            }, filtered.slice(0, 120).map(p =>
-              h('div', {
+            }, filtered.slice(0, 120).map(p => {
+              const isDl = busy === 'download:' + p.slug
+              const pct = progress && progress.slug === p.slug ? progress.pct : 0
+              return h('div', {
                 key: p.slug,
                 style: {
-                  display: 'flex', alignItems: 'center', gap: 10, padding: 8,
+                  display: 'flex', flexDirection: 'column', gap: 6, padding: 8,
                   border: `1px solid ${T.border}`, borderRadius: T.radius,
                 },
               },
-                h(PetThumb, { pet: p }),
-                h('div', { style: { flex: 1, minWidth: 0 } },
-                  h('div', {
-                    style: { color: T.text, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                  }, p.displayName),
-                  h('div', { style: { color: T.text2, fontSize: 11 } },
-                    p.slug, ' · v', p.spriteVersionNumber),
+                h('div', { style: { display: 'flex', alignItems: 'center', gap: 10 } },
+                  h(PetThumb, { pet: p }),
+                  h('div', { style: { flex: 1, minWidth: 0 } },
+                    h('div', {
+                      style: { color: T.text, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                    }, p.displayName),
+                    h('div', { style: { color: T.text2, fontSize: 11 } },
+                      p.slug, ' · v', p.spriteVersionNumber),
+                  ),
+                  h(Button, {
+                    onClick: () => void download(p),
+                    disabled: !ready || isDl,
+                  }, isDl ? t('downloading') : t('download')),
+                  h(Button, {
+                    onClick: () => void usePet(p.slug),
+                    disabled: !ready || busy === 'use:' + p.slug,
+                    tone: petSlug === p.slug ? 'primary' : undefined,
+                  }, petSlug === p.slug ? t('active') : t('use')),
                 ),
-                h(Button, {
-                  onClick: () => void download(p),
-                  disabled: !ready || busy === 'download:' + p.slug,
-                }, busy === 'download:' + p.slug ? t('downloading') : t('download')),
-                h(Button, {
-                  onClick: () => void usePet(p.slug),
-                  disabled: !ready || busy === 'use:' + p.slug,
-                  tone: petSlug === p.slug ? 'primary' : undefined,
-                }, petSlug === p.slug ? t('active') : t('use')),
-              ),
-            )),
+                isDl ? h('div', { style: { display: 'flex', alignItems: 'center', gap: 8 } },
+                  h('div', {
+                    style: {
+                      flex: 1, height: 6, borderRadius: 3, overflow: 'hidden',
+                      background: T.field,
+                    },
+                  }, h('div', {
+                    style: {
+                      height: '100%', width: `${pct}%`, background: T.accent,
+                      transition: 'width 0.2s ease',
+                    },
+                  })),
+                  h('span', { style: { color: T.text2, fontSize: 11, minWidth: 34 } }, `${pct}%`),
+                ) : null,
+              )
+            }),
+          ),
         ),
 
         h(Card, null,
@@ -585,14 +626,15 @@ window.__ModuleLoader__.load({
     }
 
     function MessageBar({ t, compact }) {
-      const { sessions, error, refresh } = useSessions()
-      const [sessionId, setSessionId] = useState('')
       const [text, setText] = useState('')
       const [busy, setBusy] = useState(false)
       const [msg, setMsg] = useState('')
       const [bubble, setBubble] = useState('')
+      const [activeId, setActiveId] = useState('')
+      const [running, setRunning] = useState(false)
       const mount = useMount()
 
+      // Like Codex: automatically follow the active session, no picker.
       useEffect(() => {
         if (!mount.ready || !petNs) return
         let alive = true
@@ -600,46 +642,34 @@ window.__ModuleLoader__.load({
           try {
             const s = ok(await petNs.state())
             if (alive) setBubble(s?.lastBubble || '')
-          } catch { /* keep last bubble */ }
+            const a = ok(await petNs.active())
+            if (alive) {
+              setActiveId(a?.sessionId || '')
+              const list = ok(await petNs.sessions())
+              setRunning(Boolean((list?.items ?? []).find(x => x.sessionId === a?.sessionId)?.running))
+            }
+          } catch { /* keep last values */ }
         }
         void poll()
         const id = setInterval(poll, 2000)
         return () => { alive = false; clearInterval(id) }
       }, [mount.ready])
 
-      useEffect(() => {
-        if (sessionId || sessions.length === 0) return
-        // Default to the most recently active, non-blank session.
-        const pick = sessions.find(s => s.running) || sessions.find(s => !s.blank) || sessions[0]
-        if (pick) setSessionId(pick.sessionId)
-      }, [sessions, sessionId])
-
       async function send() {
-        if (!sessionId || !text.trim()) return
+        if (!text.trim()) return
         setBusy(true); setMsg('')
-        try { ok(await petNs.send(sessionId, text.trim())); setText('') }
+        try { ok(await petNs.send('', text.trim())); setText('') }
         catch (e) { setMsg(String(e?.message || e)) }
         finally { setBusy(false) }
       }
 
       async function stop() {
-        if (!sessionId) return
         setBusy(true); setMsg('')
-        try { ok(await petNs.stopSession(sessionId)); await refresh() }
+        try { ok(await petNs.stopSession('')) }
         catch (e) { setMsg(String(e?.message || e)) }
         finally { setBusy(false) }
       }
 
-      const active = sessions.find(s => s.sessionId === sessionId)
-      const selectStyle = {
-        padding: '4px 8px',
-        border: `1px solid ${T.border}`,
-        borderRadius: T.radius,
-        background: T.field,
-        color: T.text,
-        fontSize: 12,
-        maxWidth: compact ? 140 : 220,
-      }
       const inputStyle = {
         flex: 1, minWidth: 0, padding: '5px 8px',
         border: `1px solid ${T.border}`,
@@ -654,21 +684,11 @@ window.__ModuleLoader__.load({
           ? { display: 'flex', alignItems: 'center', gap: 6 }
           : { display: 'flex', flexDirection: 'column', gap: 8 },
       },
-        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
-          h('select', {
-            value: sessionId,
-            onChange: e => setSessionId(e.target.value),
-            style: selectStyle,
-            'aria-label': t('session'),
-          },
-            h('option', { value: '' }, t('selectSession')),
-            sessions.map(s => h('option', { key: s.sessionId, value: s.sessionId },
-              (s.blank ? '○ ' : s.running ? '● ' : '') + s.sessionId.slice(0, 8))),
-          ),
-          active && active.running
-            ? h(Button, { onClick: () => void stop(), disabled: busy }, t('stopMessage'))
-            : null,
-          h(Button, { onClick: () => void refresh() }, t('refresh')),
+        h('div', {
+          style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: T.text2 },
+        },
+          h('span', null, activeId ? t('following') + ': ' + activeId.slice(0, 8) : t('noSession')),
+          running ? h(Button, { onClick: () => void stop(), disabled: busy }, t('stopMessage')) : null,
         ),
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
           h('input', {
@@ -677,21 +697,19 @@ window.__ModuleLoader__.load({
             onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } },
             placeholder: t('messagePlaceholder'),
             style: inputStyle,
+            disabled: !activeId,
           }),
-          h(Button, { onClick: () => void send(), disabled: busy || !sessionId || !text.trim(), tone: 'primary' },
+          h(Button, { onClick: () => void send(), disabled: busy || !text.trim() || !activeId, tone: 'primary' },
             t('sendMessage')),
         ),
         bubble ? h('div', {
           style: {
             marginTop: 4, padding: '4px 8px', fontSize: 12,
-            color: T.text,
-            background: T.field,
-            borderRadius: T.radius,
+            color: T.text, background: T.field, borderRadius: T.radius,
             borderLeft: `2px solid ${T.accent}`,
           },
         }, bubble) : null,
         msg ? h('div', { style: { color: T.danger, fontSize: 11 } }, msg) : null,
-        error ? h('div', { style: { color: T.danger, fontSize: 11 } }, error) : null,
       )
     }
 
@@ -724,6 +742,8 @@ window.__ModuleLoader__.load({
             downloadDone: 'Downloaded {name}. You can now use it.',
             homepage: 'Petdex.dev', homepageHint: 'Browse the full gallery and create pets on the official site.',
             attribution: 'Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station).',
+            following: 'Following session', noSession: 'No active session yet',
+            petsDir: 'Local pets directory',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -750,6 +770,8 @@ window.__ModuleLoader__.load({
             downloadDone: '已下载 {name}，现在可以使用了。',
             homepage: 'Petdex.dev 官网', homepageHint: '在官网浏览完整图鉴、制作宠物。',
             attribution: '非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。',
+            following: '正在跟随会话', noSession: '暂无活跃会话',
+            petsDir: '本地宠物目录',
           },
         }), 'dsh-pet: locale')
 

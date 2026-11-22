@@ -66,6 +66,26 @@ static NSInteger rowForState(const char *name) {
   [self.atlas drawInRect:dst fromRect:src operation:NSCompositingOperationSourceOver fraction:1.0];
 }
 
+// Dragging: move the window by the delta between successive mouse positions.
+- (void)mouseDown:(NSEvent *)event {
+  NSPoint start = [event locationInWindow];
+  NSRect origin = [[self window] frame];
+  while (YES) {
+    NSEvent *e = [[self window] nextEventMatchingMask:(NSLeftMouseDraggedMask | NSLeftMouseUpMask)
+                                            untilDate:[NSDate distantFuture]
+                                               inMode:NSEventTrackingRunLoopMode
+                                              dequeue:YES];
+    if (!e || [e type] == NSLeftMouseUp) break;
+    NSPoint cur = [e locationInWindow];
+    CGFloat dx = cur.x - start.x;
+    CGFloat dy = cur.y - start.y;
+    NSRect f = origin;
+    f.origin.x += dx;
+    f.origin.y += dy;
+    [[self window] setFrameOrigin:f.origin];
+  }
+}
+
 @end
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
@@ -177,7 +197,7 @@ static NSInteger rowForState(const char *name) {
   self.window.opaque = NO;
   self.window.alphaValue = opacity;
   self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary;
-  self.window.ignoresMouseEvents = YES;
+  self.window.ignoresMouseEvents = NO;   /* allow dragging the pet */
   [self.window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:NO];
 

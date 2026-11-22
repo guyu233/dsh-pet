@@ -46,6 +46,9 @@
     "downloadDone": "Downloaded {name}. You can now use it.",
     "homepage": "Petdex.dev",
     "homepageHint": "Browse the full gallery and create pets on the official site.",
-    "attribution": "Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station)."
+    "attribution": "Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station).",
+    "following": "Following session",
+    "noSession": "No active session yet",
+    "petsDir": "Local pets directory"
   }
 }

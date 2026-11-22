@@ -5,7 +5,9 @@ A DeepSeek Harness plugin that shows a floating [Petdex](https://petdex.dev) pix
 ## Features
 
 - Native, borderless, always-on-top pet window (Win32 / AppKit); no WebView, no Node sidecar.
-- Settings → **Desk pet** section: browse the Petdex catalog with live fuzzy search (name, slug, author, kind), real per-pet preview thumbnails, download, switch and remove pets.
+- Settings → **Desk pet** section: browse the Petdex catalog with live fuzzy search (name, slug, author, kind), real per-pet preview thumbnails, per-pet download progress bar, switch and remove pets.
+- The floating pet can be **dragged** anywhere on screen (Win32 + AppKit); right-click is reserved for future actions.
+- **Auto-follows the active DSH session** like Codex: no session picker — the quick-message bar sends straight to the running/most-recent session and can stop the current turn.
 - **Quick message bar**: pick a session, send a message (Enter), or stop the current turn — via the official `sessionController.prompt/cancel`.
 - Host↔Client communication rides DSH's official Typert Remote gateway (`remote.pet`) — no loopback HTTP server.
 - Reacts to session events (running / waiting / completed / failed) via content-free state projection, with the **official Petdex animation timing table** (per-state frame counts and durations, including idle's irregular blink) ported from Petdex's `sprite.zig`.

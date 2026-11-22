@@ -46,6 +46,9 @@
     "downloadDone": "已下载 {name}，现在可以使用了。",
     "homepage": "Petdex.dev 官网",
     "homepageHint": "在官网浏览完整图鉴、制作宠物。",
-    "attribution": "非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。"
+    "attribution": "非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。",
+    "following": "正在跟随会话",
+    "noSession": "暂无活跃会话",
+    "petsDir": "本地宠物目录"
   }
 }
