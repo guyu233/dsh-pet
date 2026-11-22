@@ -251,33 +251,39 @@ static void drawFrame(void) {
 static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_TIMER:
-      advanceFrame();
-      drawFrame();
+      // While dragging, skip the GDI UpdateLayeredWindow redraw — it competes
+      // with SetWindowPos and makes the pet lag behind the cursor. The sprite
+      // image is unchanged while moving, so no redraw is needed.
+      if (!g.dragging) {
+        advanceFrame();
+        drawFrame();
+      }
       return 0;
     case WM_LBUTTONDOWN: {
-      g.dragging = 1;
-      g.dragOrigin.x = (int)(short)LOWORD(lp);
-      g.dragOrigin.y = (int)(short)HIWORD(lp);
-      ClientToScreen(hwnd, &g.dragOrigin);
+      // Use absolute screen coordinates (Petdex does the same). Client coords
+      // + ClientToScreen feed the window's own moving position back into the
+      // drag math and cause visible lag/drift.
+      GetCursorPos(&g.dragOrigin);
       GetWindowRect(hwnd, &g.windowOrigin);
+      g.dragging = 1;
       SetCapture(hwnd);
       return 0;
     }
     case WM_MOUSEMOVE:
       if (g.dragging) {
         POINT cur;
-        cur.x = (int)(short)LOWORD(lp);
-        cur.y = (int)(short)HIWORD(lp);
-        ClientToScreen(hwnd, &cur);
+        GetCursorPos(&cur);                 // absolute, independent of window pos
         int nx = g.windowOrigin.left + (cur.x - g.dragOrigin.x);
         int ny = g.windowOrigin.top + (cur.y - g.dragOrigin.y);
-        SetWindowPos(hwnd, HWND_TOPMOST, nx, ny, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, nx, ny, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
       }
       return 0;
     case WM_LBUTTONUP:
       if (g.dragging) {
         g.dragging = 0;
         ReleaseCapture();
+        drawFrame();   // resume animation/redraw after the drag
       }
       return 0;
     case WM_RBUTTONUP:

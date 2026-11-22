@@ -102,26 +102,53 @@ export default class PetRemoteService extends Service {
     this.downloadProgress = null   // { slug, phase, pct }
     this.typertRemote = bindTypertRemote(this, 'pet', { namespace: 'pet' })
 
-    // Observe only events verified against the installed Harness and the
-    // official core docs. A plain ctx.on listener on the approval waterfall
-    // never calls next(), so it cannot alter behavior.
+    // State source: the global `agent/*` events that ctx.on can actually see.
+    // (Session-level `turn/start` etc. are durable log records, NOT broadcast
+    // on the Cordis bus — listening for them via ctx.on silently never fires.)
+    // Verified against packages/core/agent/src/runtime-types.ts and
+    // docs/event-producer-consumer.md. Mirrors Petdex's state mapping:
+    //   agent/inbox/claimed   -> jumping (turn begins), then running
+    //   agent/assistant-stream, agent/pre-step -> running
+    //   agent/status running  -> running (steady fallback)
+    //   agent/status idle     -> waving (turn done), then idle
+    //   agent/error, agent/request-error -> failed
+    //   approval/request      -> waiting (user attention)
+    // Waterfall listeners (agent/request-error, agent/pre-step,
+    // approval/request) MUST call next() or they veto downstream behavior.
+
+    // turn begins: a user message was claimed by the driver.
+    ctx.on('agent/inbox/claimed', () => {
+      this._setSteady('running')
+      this._applyState('jumping', TRANSIENT_DWELL_MS.jumping)  // brief start flourish
+    })
+    // model streaming tokens / step work -> actively running.
+    ctx.on('agent/assistant-stream', () => this._setSteady('running'))
+    ctx.on('agent/pre-step', (payload, next) => {
+      this._setSteady('running')
+      return next()
+    })
+    ctx.on('agent/turn-stopping', () => { this._setSteady('running') })
+
+    ctx.on('agent/error', () => this._applyState('failed', TRANSIENT_DWELL_MS.failed))
+    // agent/request-error is a WATERFALL: observe then pass through.
+    ctx.on('agent/request-error', (payload, next) => {
+      this._applyState('failed', TRANSIENT_DWELL_MS.failed)
+      return next()
+    })
+    // approval/request is a WATERFALL — never short-circuit the user's UI.
+    ctx.on('approval/request', (payload, next) => {
+      this._setSteady('waiting')
+      return next()
+    })
     ctx.on('agent/status', (payload) => {
-      // idle<->running is the authoritative steady signal (emit mode).
+      // Steady fallback only; do not override a transient celebration/failure.
       const running = payload?.status === 'running'
-      if (running) {
-        this._setSteady('running')            // steady: work in progress
-      } else if (this.steadyState === 'running' || this.currentState === 'running') {
-        this._setSteady('idle')               // turn finished: celebrate then settle
-        this._applyState('waving', TRANSIENT_DWELL_MS.waving)
-      } else {
+      if (running) this._setSteady('running')
+      else if (!TRANSIENT_STATES.has(this.currentState)) {
         this._setSteady('idle')
+        this._applyState('waving', TRANSIENT_DWELL_MS.waving)
       }
     })
-    ctx.on('agent/error', () => this._applyState('failed', TRANSIENT_DWELL_MS.failed))
-    // approval/request is a waterfall event; observing it means "waiting"
-    // until the agent status says otherwise (approval resolved -> running).
-    ctx.on('approval/request', () => this._setSteady('waiting'))
-    ctx.on('tools/result', () => this._applyState('running'))
     ctx.on('loader/volatile-update', () => {
       const values = this._cfg()
       if (values.enabled) void this._start(); else this._stop()

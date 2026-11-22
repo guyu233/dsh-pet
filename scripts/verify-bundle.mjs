@@ -124,6 +124,17 @@ const nativeFiles = (pkg.files ?? []).filter(x => x.startsWith('native/'))
 check(nativeFiles.length > 0 && nativeFiles.some(f => existsSync(join(pkgDir, f))),
   'at least one listed native binary exists on disk')
 
+// Event contract: session-level records are NOT on the Cordis bus; only
+// agent/* / approval/* global events reach ctx.on. Waterfall listeners must
+// call next() or they veto downstream behavior (e.g. the approval UI).
+for (const ev of ["'turn/start'", "'turn/end'", "'step/start'", "'step/end'", "'tool/result'", "'assistant/message'"]) {
+  check(!new RegExp(`ctx\\.on\\(\\s*${ev}`).test(host), `Host does not listen to non-broadcast session event ${ev}`)
+}
+for (const ev of ['agent/request-error', 'agent/pre-step', 'approval/request']) {
+  const m = host.match(new RegExp(`ctx\\.on\\(\\s*'${ev}'[\\s\\S]*?\\}\\);?`))
+  check(!m || /next\(\)/.test(m[0]), `waterfall listener '${ev}' calls next()`)
+}
+
 for (const line of ok) console.log('  ok  ', line)
 for (const line of fail) console.log('  FAIL', line)
 console.log(`\n${ok.length} passed, ${fail.length} failed`)
