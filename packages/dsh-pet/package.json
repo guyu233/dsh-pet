@@ -16,9 +16,7 @@
     "locale/*.json",
     "docs",
     "icon.svg",
-    "native/win32-x64/dsh-pet.exe",
-    "native/darwin-arm64/dsh-pet",
-    "native/darwin-x64/dsh-pet"
+    "native/win32-x64/dsh-pet.exe"
   ],
   "engines": {
     "dsh": "^0.2.2-rc.5"

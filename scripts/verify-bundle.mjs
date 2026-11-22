@@ -77,6 +77,35 @@ check((pkg.files ?? []).some(x => x.includes('native/')), 'package.json files in
 // 7. No loopback HTTP remnants
 check(!/127\.0\.0\.1|createServer|localhost/.test(host + client), 'no loopback HTTP remnants')
 
+// 8. DSH install-format compliance (from official host-plugin.md /
+//    plugin-manager source): bundle must be a package with dsh.bundle.patch
+//    pointing at a real, loadable YAML file; entry must be a valid module.
+check(pkg.name?.startsWith('@') || typeof pkg.name === 'string', 'package.json has a name')
+check(typeof pkg.version === 'string' && pkg.version.length > 0, 'package.json has a version')
+check(pkg.type === 'module', 'package.json type is module')
+check(pkg.private === true, 'package.json private is true (local bundle)')
+check(typeof pkg.dsh?.bundle?.patch === 'string', 'dsh.bundle.patch is declared')
+const patchRef = (pkg.dsh?.bundle?.patch ?? '').replace(/^\.\//, '')
+check(patchRef === 'cordis.patch.yml', 'dsh.bundle.patch points to cordis.patch.yml')
+check(patch.includes('insert:') && patch.includes('@guyu233/dsh-pet'), 'patch inserts the plugin row')
+check(pkg.exports?.['.'] === './index.js', 'exports "." maps to ./index.js')
+check(pkg.exports?.['./client'] === './client.js', 'exports "./client" maps to ./client.js')
+check(pkg.exports?.['./locale/*.json'] === './locale/*.json', 'exports locale glob')
+check(pkg.exports?.['./icon'] === './icon.svg', 'exports icon')
+check(typeof pkg.engines?.dsh === 'string', 'engines.dsh is declared')
+
+// Every path in `files` that points at a concrete file must exist.
+const { existsSync } = await import('node:fs')
+for (const f of (pkg.files ?? [])) {
+  if (f.includes('*')) continue
+  check(existsSync(join(pkgDir, f)), `files entry exists: ${f}`)
+}
+
+// Native binary for at least one platform must be present and listed.
+const nativeFiles = (pkg.files ?? []).filter(x => x.startsWith('native/'))
+check(nativeFiles.length > 0 && nativeFiles.some(f => existsSync(join(pkgDir, f))),
+  'at least one listed native binary exists on disk')
+
 for (const line of ok) console.log('  ok  ', line)
 for (const line of fail) console.log('  FAIL', line)
 console.log(`\n${ok.length} passed, ${fail.length} failed`)

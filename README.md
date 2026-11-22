@@ -39,9 +39,27 @@ The binaries land under `packages/dsh-pet/native/<platform>-<arch>/`.
 
 ## Install into DSH
 
-In DSH, open **Plugins → Add plugin** and select the `packages/dsh-pet` directory, or call `plugin_manager install_bundle` with that absolute path. Then open **Settings → Desk pet**.
+The bundle is a standard DSH bundle package: `package.json` declares `dsh.bundle.patch` and the Host entry default-exports a Cordis Service; the Client half registers the Settings section. It follows the official bundle format (verified with `scripts/verify-bundle.mjs`, 53 checks).
 
-A release bundle must include the compiled `native/` directory (see `files` in `packages/dsh-pet/package.json`).
+Two supported install paths:
+
+1. **Local directory (recommended)** — in DSH open **Plugins → Add plugin** and select the absolute path:
+   ```
+   d:\dsh-pet\packages\dsh-pet
+   ```
+   Or call `plugin_manager` with `action: install_bundle`, `target` set to that absolute directory. Local installs link the whole directory, so the compiled `native/win32-x64/dsh-pet.exe` is included.
+
+2. **Tarball** — a distributable npm tarball is built at `dist/guyu233-dsh-pet-0.1.0.tgz` (`npm pack` from the bundle directory). DSH accepts `.tgz` / `.tar.gz` specs; `files` in `package.json` controls its contents and includes the native binary.
+
+After installing, open **Settings → Desk pet**. The compiled Win32 binary ships in the package; macOS binaries can be added with `scripts/build-native.ps1 -Platform macos` on a Mac (see `files` in `package.json`).
+
+### Format compliance
+
+- `dsh.bundle.patch` → `cordis.patch.yml`, which inserts one plugin row.
+- `exports`: `.` → Host, `./client` → Client, `./locale/*.json`, `./icon`.
+- `engines.dsh: ^0.2.2-rc.5` satisfies the installed runtime `0.2.2-rc.5` (verified with semver `includePrerelease`).
+- `dsh.bundle.platforms` intentionally omitted (omission allows all hosts; the Host warns gracefully if the native binary is missing).
+- Display metadata (`meta.title`/`description`/`detail`) present in `en.json` and `zh.json`; original icon in `icon.svg`.
 
 ## Status mapping
 

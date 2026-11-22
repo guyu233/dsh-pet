@@ -1,0 +1,13 @@
+# Build artifacts / distributables
+dist/
+*.zip
+
+# Native compiler intermediates
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# Local test pets
+.pets-local/
