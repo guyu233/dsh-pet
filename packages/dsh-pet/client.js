@@ -81,11 +81,14 @@ window.__ModuleLoader__.load({
       ]),
     })
 
-    // Mounted once in apply(). namespace properties are tracked and must be
-    // resolved there, not read inside a render callback.
+    // Mounted once in apply(). `petNs` is resolved on the client context, not
+    // read from a render callback. Mount may finish AFTER the Settings view
+    // first renders, so notify mounted components to re-render.
     let petNs
-
     let mountError = ''
+    const mountListeners = new Set()
+    const notifyMount = () => { for (const fn of mountListeners) fn() }
+
     async function mountPet(ctx) {
       const remote = ctx.get('remote') ?? ctx.remote
       if (!remote || typeof remote.$mount !== 'function') {
@@ -98,6 +101,19 @@ window.__ModuleLoader__.load({
       }
       petNs = ns
       mountError = ''
+      notifyMount()
+    }
+
+    // React hook: re-render whenever the mount state changes.
+    function useMount() {
+      const [, bump] = useState(0)
+      useEffect(() => {
+        const fn = () => bump(n => n + 1)
+        mountListeners.add(fn)
+        if (petNs || mountError) fn() // catch a mount that finished before first render
+        return () => mountListeners.delete(fn)
+      }, [])
+      return { ns: petNs, error: mountError, ready: Boolean(petNs) && !mountError }
     }
 
     function ok(result) {
@@ -203,12 +219,13 @@ window.__ModuleLoader__.load({
     function usePetState() {
       const [status, setStatus] = useState(null)
       const [error, setError] = useState('')
+      const mount = useMount()
       const refresh = useCallback(async () => {
         if (!petNs) return
         try { setError(''); setStatus(ok(await petNs.state())) }
         catch (e) { setError(String(e?.message || e)); setStatus(null) }
       }, [])
-      useEffect(() => { void refresh() }, [refresh])
+      useEffect(() => { void refresh() }, [refresh, mount.ready])
       return { status, error, refresh }
     }
 
@@ -295,7 +312,8 @@ window.__ModuleLoader__.load({
         setOpacity(Number(pet.status.opacity) || 85)
       }, [pet.status])
 
-      const ready = Boolean(petNs) && !mountError
+      const mount = useMount()
+      const ready = mount.ready
 
       function openHomepage() {
         try {
@@ -314,7 +332,7 @@ window.__ModuleLoader__.load({
       async function run(label, fn, after) {
         setBusy(label); setMsg('')
         try {
-          if (!ready) throw new Error(mountError || t('notReady'))
+          if (!ready) throw new Error(mount.error || t('notReady'))
           const result = ok(await fn())
           if (after) after(result)
           await pet.refresh()
@@ -368,7 +386,7 @@ window.__ModuleLoader__.load({
             padding: '8px 12px', color: T.danger, fontSize: 13,
             border: `1px solid ${T.danger}`, borderRadius: T.radius,
           },
-        }, t('notReady') + (mountError ? ': ' + mountError : '')) : null,
+        }, t('notReady') + (mount.error ? ': ' + mount.error : '')) : null,
         msg ? h('div', {
           style: {
             padding: '6px 12px', color: T.text, fontSize: 13,
@@ -553,6 +571,7 @@ window.__ModuleLoader__.load({
     function useSessions() {
       const [sessions, setSessions] = useState([])
       const [error, setError] = useState('')
+      const mount = useMount()
       const refresh = useCallback(async () => {
         if (!petNs) return
         try {
@@ -561,7 +580,7 @@ window.__ModuleLoader__.load({
           setError('')
         } catch (e) { setError(String(e?.message || e)); setSessions([]) }
       }, [])
-      useEffect(() => { void refresh() }, [refresh])
+      useEffect(() => { void refresh() }, [refresh, mount.ready])
       return { sessions, error, refresh }
     }
 
@@ -572,9 +591,10 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = useState(false)
       const [msg, setMsg] = useState('')
       const [bubble, setBubble] = useState('')
+      const mount = useMount()
 
       useEffect(() => {
-        if (!petNs) return
+        if (!mount.ready || !petNs) return
         let alive = true
         const poll = async () => {
           try {
@@ -585,7 +605,7 @@ window.__ModuleLoader__.load({
         void poll()
         const id = setInterval(poll, 2000)
         return () => { alive = false; clearInterval(id) }
-      }, [])
+      }, [mount.ready])
 
       useEffect(() => {
         if (sessionId || sessions.length === 0) return
@@ -740,6 +760,7 @@ window.__ModuleLoader__.load({
         } catch (e) {
           mountError = String(e?.message || e)
           ctx.logger?.warn('dsh-pet: remote mount failed: %s', mountError)
+          notifyMount()
         }
 
         ctx.slots.inject('settings.section', () => ctx.slots.register({
