@@ -22,6 +22,22 @@ import z from '@deepseek-ai/schemastery'
 
 const REMOTE_METHOD_DESCRIPTOR = '@deepseek-ai/dsh-typert-protocol/remote-methods'
 
+/* State machine ported from Petdex (main.zig / state-queue.ts):
+ * - steady states persist until the next event: idle, running, waiting
+ * - transient states play for their dwell then revert to the steady state:
+ *   jumping, waving, failed, review
+ * - a stuck `running` with no fresh event reverts after a grace period.
+ */
+const TRANSIENT_STATES = new Set(['jumping', 'waving', 'failed', 'review'])
+const MIN_DWELL_MS = 250
+const STALE_RUNNING_GRACE_MS = 30_000
+const TRANSIENT_DWELL_MS = {
+  jumping: 1200,
+  waving: 1200,
+  failed: 1200,
+  review: 1200,
+}
+
 export const Config = z.object({
   enabled: z.boolean().default(false),
   petSlug: z.string().default('boba'),
@@ -50,6 +66,26 @@ function safeSlug(slug) {
   return typeof slug === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(slug) ? slug : null
 }
 
+/** Strict boolean coercion for config values arriving from Cordis.
+ * Depending on how a profile supplies config, `enabled` may be a primitive,
+ * a string, or a schemastery value object with `.get()`. A schema *definition*
+ * object is truthy, which would otherwise start the pet while disabled. */
+function asBool(v) {
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'number') return v !== 0
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'false' || s === '0' || s === 'off' || s === 'no' || s === '') return false
+    if (s === 'true' || s === '1' || s === 'on' || s === 'yes') return true
+    return false
+  }
+  if (v && typeof v === 'object' && typeof v.get === 'function') {
+    try { return asBool(v.get()) } catch { return false }
+  }
+  // Anything else (schema descriptors, null, undefined, objects) is NOT enabled.
+  return false
+}
+
 /** Host Remote service, namespace `pet`. All methods return JSON-safe values. */
 export default class PetRemoteService extends Service {
   constructor(ctx, config = {}) {
@@ -57,39 +93,46 @@ export default class PetRemoteService extends Service {
     this.config = config
     this.overrides = {}
     this.handle = null
-    this.currentState = 'idle'
-    this.agentStatus = 'idle'
-    this.toolTimer = null
+    this.currentState = 'idle'      // currently displayed animation state
+    this.steadyState = 'idle'       // state to revert to after a transient
+    this.settleTimer = null
+    this.staleTimer = null
     this.generation = 0
     this.lastBubble = { text: '', at: 0 }
     this.downloadProgress = null   // { slug, phase, pct }
     this.typertRemote = bindTypertRemote(this, 'pet', { namespace: 'pet' })
 
     // Observe only events verified against the installed Harness and the
-    // official core docs: agent/status (idle<->running), agent/error,
-    // approval/request, tools/result. A plain ctx.on listener on the
-    // approval waterfall never calls next(), so it cannot alter behavior.
+    // official core docs. A plain ctx.on listener on the approval waterfall
+    // never calls next(), so it cannot alter behavior.
     ctx.on('agent/status', (payload) => {
-      this.agentStatus = payload?.status === 'running' ? 'running' : 'idle'
-      this._post(this.agentStatus === 'running' ? 'running' : 'waving')
+      // idle<->running is the authoritative steady signal (emit mode).
+      const running = payload?.status === 'running'
+      if (running) {
+        this._setSteady('running')            // steady: work in progress
+      } else if (this.steadyState === 'running' || this.currentState === 'running') {
+        this._setSteady('idle')               // turn finished: celebrate then settle
+        this._applyState('waving', TRANSIENT_DWELL_MS.waving)
+      } else {
+        this._setSteady('idle')
+      }
     })
-    ctx.on('agent/error', () => this._post('failed'))
-    ctx.on('approval/request', () => this._post('waiting'))
-    ctx.on('tools/result', () => {
-      this._post('running')
-      if (this.toolTimer) clearTimeout(this.toolTimer)
-      this.toolTimer = setTimeout(
-        () => this._post(this.agentStatus === 'running' ? 'running' : 'idle'),
-        400,
-      )
-    })
+    ctx.on('agent/error', () => this._applyState('failed', TRANSIENT_DWELL_MS.failed))
+    // approval/request is a waterfall event; observing it means "waiting"
+    // until the agent status says otherwise (approval resolved -> running).
+    ctx.on('approval/request', () => this._setSteady('waiting'))
+    ctx.on('tools/result', () => this._applyState('running'))
     ctx.on('loader/volatile-update', () => {
       const values = this._cfg()
       if (values.enabled) void this._start(); else this._stop()
     })
 
     // Cordis runs this disposer on unload, HMR and Harness exit: no residue.
-    ctx.effect(() => () => this._stop(), 'dsh-pet: pet process cleanup')
+    ctx.effect(() => () => {
+      this._stop()
+      if (this.settleTimer) clearTimeout(this.settleTimer)
+      if (this.staleTimer) clearTimeout(this.staleTimer)
+    }, 'dsh-pet: pet process and timers cleanup')
     if (this._cfg().enabled) void this._start()
   }
 
@@ -109,17 +152,58 @@ export default class PetRemoteService extends Service {
   _cfg() {
     const c = this.config
     return {
-      enabled: this.overrides.enabled ?? (c.enabled?.get?.() ?? c.enabled),
+      enabled: asBool(this.overrides.enabled ?? (c.enabled?.get?.() ?? c.enabled)),
       petSlug: this.overrides.petSlug ?? (c.petSlug?.get?.() ?? c.petSlug),
       scale: this.overrides.scale ?? (c.scale?.get?.() ?? c.scale),
       opacity: this.overrides.opacity ?? (c.opacity?.get?.() ?? c.opacity),
     }
   }
 
+  /** Write a state line to the native renderer. Only on change, so an
+   * identical repeated event does not restart the frame animation. */
   _post(state) {
+    if (state === this.currentState) return
     this.currentState = state
     if (!this.handle?.stdin) return
     try { this.handle.stdin.write(`${state}\n`) } catch { /* process going away */ }
+  }
+
+  /** A steady state persists until the next event; refresh the stale-running
+   * watchdog so a `running` with no fresh events eventually settles. */
+  _setSteady(state) {
+    this.steadyState = state
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null }
+    this._post(state)
+    if (this.staleTimer) clearTimeout(this.staleTimer)
+    this.staleTimer = setTimeout(() => {
+      if (this.steadyState === 'running' && !TRANSIENT_STATES.has(this.currentState)) {
+        this._setSteady('idle')
+      }
+    }, STALE_RUNNING_GRACE_MS)
+  }
+
+  /** Apply an event state. Transient states revert to the steady state after
+   * their dwell (Petdex state-queue semantics); steady states just persist. */
+  _applyState(state, dwellMs) {
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null }
+    this._post(state)
+    if (TRANSIENT_STATES.has(state)) {
+      const dwell = Math.max(MIN_DWELL_MS, dwellMs || MIN_DWELL_MS)
+      this.settleTimer = setTimeout(() => {
+        this.settleTimer = null
+        this._post(this.steadyState)
+      }, dwell)
+    } else {
+      // A steady event state (e.g. running from tools/result) also refreshes
+      // the stale watchdog.
+      this.steadyState = state
+      if (this.staleTimer) clearTimeout(this.staleTimer)
+      this.staleTimer = setTimeout(() => {
+        if (this.steadyState === 'running' && !TRANSIENT_STATES.has(this.currentState)) {
+          this._setSteady('idle')
+        }
+      }, STALE_RUNNING_GRACE_MS)
+    }
   }
 
   _stop() {
@@ -127,12 +211,18 @@ export default class PetRemoteService extends Service {
     const current = this.handle
     this.handle = null
     if (current) current.terminate()
+    if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null }
+    if (this.staleTimer) { clearTimeout(this.staleTimer); this.staleTimer = null }
     this.currentState = 'idle'
+    this.steadyState = 'idle'
   }
 
   async _start() {
     this._stop()
     const values = this._cfg()
+    // Hard guard: never show a pet while the enable switch is off. This is
+    // the last line of defence against stale config or schema-descriptor values.
+    if (!values.enabled) return
     const binary = nativeBinary()
     if (!binary || !existsSync(binary)) {
       this.ctx.logger.warn('dsh-pet: native binary missing for %s/%s', osPlatform(), osArch())
@@ -157,7 +247,9 @@ export default class PetRemoteService extends Service {
         graceMs: 1500,
         env: { DSH_PET_PARENT_PID: String(process.pid) },
       })
-      this._post(this.currentState)
+      // New process starts at idle in the renderer; push the live state even
+      // if it equals currentState (bypass the dedup guard for a fresh stdin).
+      try { this.handle.stdin.write(`${this.currentState}\n`) } catch { /* going away */ }
       void this.handle.done.catch(() => {}).finally(() => {
         if (this.generation === myGeneration) this.handle = null
       })
@@ -231,6 +323,7 @@ export default class PetRemoteService extends Service {
   async start() {
     try {
       this._requireTrustedCaller('start')
+      await this._saveConfig({ enabled: true })
       await this._start(); return { ok: true }
     } catch (error) { return { ok: false, error: String(error?.message ?? error) } }
   }
@@ -428,8 +521,9 @@ export default class PetRemoteService extends Service {
    * renderer only animates sprites; bubbles are shown in the settings/companion
    * UI so no text rendering is needed in the OS-level window. */
   _bubble(text) {
+    // Bubbles are UI-only hints; they must not drive the animation state —
+    // that is exclusively the state machine's job.
     this.lastBubble = { text: String(text).slice(0, 120), at: Date.now() }
-    this._post('running')
   }
 }
 

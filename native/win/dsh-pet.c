@@ -359,13 +359,23 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
 
   makeScaledBitmap();
 
+  // Park at the bottom-right of the work area (like Petdex), never covering
+  // the whole desktop: the window is exactly one scaled frame in size.
+  int px = 40, py = 40;
+  RECT work = { 0 };
+  if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+    px = work.right - g.frameW - 24;
+    py = work.bottom - g.frameH - 24;
+    if (px < 0) px = 0;
+    if (py < 0) py = 0;
+  }
   g.hwnd = CreateWindowExW(
     WS_EX_LAYERED | WS_EX_TOOLWINDOW,   /* no WS_EX_TRANSPARENT: allow dragging */
     L"DshPetWindow", L"dsh-pet", WS_POPUP,
-    0, 0, g.frameW, g.frameH, NULL, NULL, hInst, NULL);
+    px, py, g.frameW, g.frameH, NULL, NULL, hInst, NULL);
   if (!g.hwnd) fail(L"Could not create pet window");
 
-  SetWindowPos(g.hwnd, HWND_TOPMOST, 0, 0, g.frameW, g.frameH,
+  SetWindowPos(g.hwnd, HWND_TOPMOST, px, py, g.frameW, g.frameH,
                SWP_NOMOVE | SWP_NOACTIVATE);
   ShowWindow(g.hwnd, SW_SHOWNOACTIVATE);
   drawFrame();

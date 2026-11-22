@@ -193,12 +193,20 @@ static NSInteger rowForState(const char *name) {
       styleMask:NSWindowStyleMaskBorderless
       backing:NSBackingStoreBuffered defer:NO];
   self.window.contentView = self.petView;
-  self.window.level = kCGFloatingWindowLevel;
+  // Match Petdex's panel policy: float above all spaces, never steal focus,
+  // transparent background, no shadow. Small frame-sized window (w x h) only,
+  // so it never covers the desktop; ignoresMouseEvents stays NO for dragging.
+  self.window.level = kCGStatusWindowLevel;
   self.window.opaque = NO;
+  self.window.backgroundColor = [NSColor clearColor];
+  self.window.hasShadow = NO;
   self.window.alphaValue = opacity;
   self.window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorStationary;
   self.window.ignoresMouseEvents = NO;   /* allow dragging the pet */
-  [self.window makeKeyAndOrderFront:nil];
+  self.window.movableByWindowBackground = NO;
+  // Show without becoming key/main — mirrors Petdex canBecomeKey=NO so the
+  // Harness (or any other app) keeps keyboard focus.
+  [self.window orderFrontRegardless];
   [NSApp activateIgnoringOtherApps:NO];
 
   (void)intervalMs; // preserved arg for CLI compatibility; timing uses the state table
