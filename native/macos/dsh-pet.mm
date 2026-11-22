@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 
 static const char *STATE_NAMES[9] = {
   "idle", "running-right", "running-left", "waving", "jumping",

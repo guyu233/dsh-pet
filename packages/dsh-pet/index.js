@@ -13,6 +13,7 @@
 
 import { Service } from '@deepseek-ai/cordis'
 import { bindTypertRemote } from '@deepseek-ai/dsh-typert-protocol'
+import { randomUUID } from 'node:crypto'
 import { homedir, platform as osPlatform, arch as osArch } from 'node:os'
 import { join, dirname } from 'node:path'
 import { existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from 'node:fs'
@@ -60,6 +61,7 @@ export default class PetRemoteService extends Service {
     this.agentStatus = 'idle'
     this.toolTimer = null
     this.generation = 0
+    this.lastBubble = { text: '', at: 0 }
     this.typertRemote = bindTypertRemote(this, 'pet', { namespace: 'pet' })
 
     // Observe only events verified against the installed Harness and the
@@ -201,6 +203,7 @@ export default class PetRemoteService extends Service {
       opacity: c.opacity,
       installed: this._installed(),
       nativeMissing: !bin || !existsSync(bin),
+      lastBubble: Date.now() - this.lastBubble.at < 10000 ? this.lastBubble.text : '',
     }
   }
 
@@ -280,6 +283,79 @@ export default class PetRemoteService extends Service {
       return { ok: false, error: String(error?.message ?? error) }
     }
   }
+
+  /* ---------------- Session bridge (message bubble / send / stop) ---------------- */
+
+  _controller() {
+    return this.ctx.get('sessionController')
+  }
+
+  /** List visible sessions for the bubble's session picker. */
+  async sessions() {
+    try {
+      const controller = this._controller()
+      if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
+      const value = await controller.list({}, new AbortController().signal)
+      const items = (value?.items ?? []).map(item => ({
+        sessionId: String(item.sessionId),
+        running: Boolean(item.running),
+        blank: Boolean(item.blank),
+        updatedAt: Number(item.updatedAt) || 0,
+        cwd: typeof item.cwd === 'string' ? item.cwd : undefined,
+        origin: item.origin === 'subagent' ? 'subagent' : undefined,
+        agentAvailable: Boolean(item.agentAvailable),
+      }))
+      // Prefer the most recently active session.
+      items.sort((a, b) => b.updatedAt - a.updatedAt)
+      return { ok: true, items: items.slice(0, 50) }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
+  /** Send a text message into a session's inbox via the official controller. */
+  async send(sessionId, text) {
+    try {
+      this._requireTrustedCaller('send')
+      const content = typeof text === 'string' ? text.trim() : ''
+      if (!sessionId || !content) return { ok: false, error: 'sessionId and text are required' }
+      const controller = this._controller()
+      if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
+      const value = await controller.prompt({
+        requestId: randomUUID(),
+        sessionId,
+        mode: 'queue',
+        content: [{ type: 'text', text: content }],
+      }, new AbortController().signal)
+      this._bubble(`you: ${content.slice(0, 120)}`)
+      return { ok: Boolean(value?.accepted), error: value?.accepted ? undefined : 'prompt not accepted' }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
+  /** Cancel the active turn of a session (stop current message). */
+  stopSession(sessionId) {
+    try {
+      this._requireTrustedCaller('stopSession')
+      if (!sessionId) return { ok: false, error: 'sessionId is required' }
+      const controller = this._controller()
+      if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
+      const value = controller.cancel({ sessionId })
+      this._bubble('stopped')
+      return { ok: Boolean(value?.accepted), error: value?.accepted ? undefined : 'cancel not accepted' }
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
+  /** Record a short, content-light bubble for the Client UI. The native
+   * renderer only animates sprites; bubbles are shown in the settings/companion
+   * UI so no text rendering is needed in the OS-level window. */
+  _bubble(text) {
+    this.lastBubble = { text: String(text).slice(0, 120), at: Date.now() }
+    this._post('running')
+  }
 }
 
 // Prototype @Remote marker descriptor — the generated equivalent of
@@ -295,6 +371,9 @@ Object.defineProperty(PetRemoteService.prototype, REMOTE_METHOD_DESCRIPTOR, {
       { method: 'stop', invocation: { kind: 'direct' } },
       { method: 'download', invocation: { kind: 'direct' } },
       { method: 'remove', invocation: { kind: 'direct' } },
+      { method: 'sessions', invocation: { kind: 'direct' } },
+      { method: 'send', invocation: { kind: 'direct' } },
+      { method: 'stopSession', invocation: { kind: 'direct' } },
     ],
   },
 })

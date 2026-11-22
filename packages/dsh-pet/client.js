@@ -70,6 +70,12 @@ window.__ModuleLoader__.load({
           { name: 'spriteUrl', codec: stringCodec('spriteUrl') },
         ]),
         method('remove', [{ name: 'slug', codec: stringCodec('slug') }]),
+        method('sessions'),
+        method('send', [
+          { name: 'sessionId', codec: stringCodec('sessionId') },
+          { name: 'text', codec: stringCodec('text') },
+        ]),
+        method('stopSession', [{ name: 'sessionId', codec: stringCodec('sessionId') }]),
       ]),
     })
 
@@ -352,9 +358,142 @@ window.__ModuleLoader__.load({
             )),
         ),
 
+        h(Card, null,
+          h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: 'var(--dsw-alias-label-primary)' } }, t('message')),
+          h('p', { style: { color: 'var(--dsw-alias-label-secondary)', fontSize: 12 } }, t('messageHint')),
+          h(MessageBar, { t }),
+        ),
+
         pet.status?.nativeMissing ? h('div', {
           style: { color: 'var(--dsw-alias-state-danger)', fontSize: 12 },
         }, t('nativeMissing')) : null,
+      )
+    }
+
+    /* ---------- Session message bar (send / stop, like a pet chat bubble) ---------- */
+
+    function useSessions() {
+      const [sessions, setSessions] = useState([])
+      const [error, setError] = useState('')
+      const refresh = useCallback(async () => {
+        if (!petNs) return
+        try {
+          const result = ok(await petNs.sessions())
+          setSessions(result?.items ?? [])
+          setError('')
+        } catch (e) { setError(String(e?.message || e)); setSessions([]) }
+      }, [])
+      useEffect(() => { void refresh() }, [refresh])
+      return { sessions, error, refresh }
+    }
+
+    function MessageBar({ t, compact }) {
+      const { sessions, error, refresh } = useSessions()
+      const [sessionId, setSessionId] = useState('')
+      const [text, setText] = useState('')
+      const [busy, setBusy] = useState(false)
+      const [msg, setMsg] = useState('')
+      const [bubble, setBubble] = useState('')
+
+      useEffect(() => {
+        if (!petNs) return
+        let alive = true
+        const poll = async () => {
+          try {
+            const s = ok(await petNs.state())
+            if (alive) setBubble(s?.lastBubble || '')
+          } catch { /* keep last bubble */ }
+        }
+        void poll()
+        const id = setInterval(poll, 2000)
+        return () => { alive = false; clearInterval(id) }
+      }, [])
+
+      useEffect(() => {
+        if (sessionId || sessions.length === 0) return
+        // Default to the most recently active, non-blank session.
+        const pick = sessions.find(s => s.running) || sessions.find(s => !s.blank) || sessions[0]
+        if (pick) setSessionId(pick.sessionId)
+      }, [sessions, sessionId])
+
+      async function send() {
+        if (!sessionId || !text.trim()) return
+        setBusy(true); setMsg('')
+        try { ok(await petNs.send(sessionId, text.trim())); setText('') }
+        catch (e) { setMsg(String(e?.message || e)) }
+        finally { setBusy(false) }
+      }
+
+      async function stop() {
+        if (!sessionId) return
+        setBusy(true); setMsg('')
+        try { ok(await petNs.stopSession(sessionId)); await refresh() }
+        catch (e) { setMsg(String(e?.message || e)) }
+        finally { setBusy(false) }
+      }
+
+      const active = sessions.find(s => s.sessionId === sessionId)
+      const selectStyle = {
+        padding: '4px 8px',
+        border: '1px solid var(--dsw-alias-border-primary)',
+        borderRadius: 'var(--dsw-radius-sm)',
+        background: 'var(--dsw-alias-bg-primary)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 12,
+        maxWidth: compact ? 140 : 220,
+      }
+      const inputStyle = {
+        flex: 1, minWidth: 0, padding: '5px 8px',
+        border: '1px solid var(--dsw-alias-border-primary)',
+        borderRadius: 'var(--dsw-radius-sm)',
+        background: 'var(--dsw-alias-bg-primary)',
+        color: 'var(--dsw-alias-label-primary)',
+        fontSize: 13,
+      }
+
+      return h('div', {
+        style: compact
+          ? { display: 'flex', alignItems: 'center', gap: 6 }
+          : { display: 'flex', flexDirection: 'column', gap: 8 },
+      },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+          h('select', {
+            value: sessionId,
+            onChange: e => setSessionId(e.target.value),
+            style: selectStyle,
+            'aria-label': t('session'),
+          },
+            h('option', { value: '' }, t('selectSession')),
+            sessions.map(s => h('option', { key: s.sessionId, value: s.sessionId },
+              (s.blank ? '○ ' : s.running ? '● ' : '') + s.sessionId.slice(0, 8))),
+          ),
+          active && active.running
+            ? h(Button, { onClick: () => void stop(), disabled: busy }, t('stopMessage'))
+            : null,
+          h(Button, { onClick: () => void refresh() }, t('refresh')),
+        ),
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 6 } },
+          h('input', {
+            value: text,
+            onChange: e => setText(e.target.value),
+            onKeyDown: e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } },
+            placeholder: t('messagePlaceholder'),
+            style: inputStyle,
+          }),
+          h(Button, { onClick: () => void send(), disabled: busy || !sessionId || !text.trim(), tone: 'primary' },
+            t('sendMessage')),
+        ),
+        bubble ? h('div', {
+          style: {
+            marginTop: 4, padding: '4px 8px', fontSize: 12,
+            color: 'var(--dsw-alias-label-primary)',
+            background: 'var(--dsw-alias-bg-tertiary)',
+            borderRadius: 'var(--dsw-radius-sm)',
+            borderLeft: '2px solid var(--dsw-alias-state-business-primary)',
+          },
+        }, bubble) : null,
+        msg ? h('div', { style: { color: 'var(--dsw-alias-state-danger)', fontSize: 11 } }, msg) : null,
+        error ? h('div', { style: { color: 'var(--dsw-alias-state-danger)', fontSize: 11 } }, error) : null,
       )
     }
 
@@ -376,6 +515,10 @@ window.__ModuleLoader__.load({
             nativeMissing: 'Native pet binary is not built for this platform yet.',
             browse: 'Open on petdex.dev', save: 'Save changes', discard: 'Discard',
             saved: 'Saved', saveFailed: 'Save failed',
+            message: 'Quick message', messageHint: 'Send a message to a session from your desk pet.',
+            session: 'Session', selectSession: 'Select a session',
+            messagePlaceholder: 'Type a message (Enter to send)',
+            sendMessage: 'Send', stopMessage: 'Stop',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -391,6 +534,10 @@ window.__ModuleLoader__.load({
             nativeMissing: '当前平台尚未编译原生桌宠程序。',
             browse: '在 petdex.dev 打开', save: '保存更改', discard: '放弃更改',
             saved: '已保存', saveFailed: '保存失败',
+            message: '快速消息', messageHint: '通过桌宠向某个会话发送消息。',
+            session: '会话', selectSession: '选择会话',
+            messagePlaceholder: '输入消息（回车发送）',
+            sendMessage: '发送', stopMessage: '停止',
           },
         }), 'dsh-pet: locale')
 

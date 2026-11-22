@@ -59,12 +59,14 @@ typedef struct {
 
 static PetCtx g;
 
+/* Returns the row index, or -1 for unknown lines (e.g. "bubble:...")
+ * so callers can ignore them instead of snapping to idle. */
 static int rowForState(const char *name) {
-  if (!name) return 0;
+  if (!name) return -1;
   for (int i = 0; i < ROWS; i++) {
     if (_stricmp(name, STATE_NAMES[i]) == 0) return i;
   }
-  return 0;
+  return -1;
 }
 
 static void fail(const wchar_t *msg) {
@@ -225,9 +227,11 @@ static DWORD WINAPI stdinThread(LPVOID unused) {
     char *line = strtok(buf, "\r\n");
     while (line && !g.quitting) {
       int row = rowForState(line);
-      g.row = row;
-      g.frame = 0;
-      drawFrame();
+      if (row >= 0) {
+        g.row = row;
+        g.frame = 0;
+        drawFrame();
+      }
       line = strtok(NULL, "\r\n");
     }
   }

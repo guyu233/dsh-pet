@@ -6,6 +6,7 @@ A DeepSeek Harness plugin that shows a floating [Petdex](https://petdex.dev) pix
 
 - Native, borderless, always-on-top pet window (Win32 / AppKit); no WebView, no Node sidecar.
 - Settings → **Desk pet** section: browse the Petdex catalog, download, switch and remove pets.
+- **Quick message bar**: pick a session, send a message (Enter), or stop the current turn — via the official `sessionController.prompt/cancel`.
 - Host↔Client communication rides DSH's official Typert Remote gateway (`remote.pet`) — no loopback HTTP server.
 - Reacts to session events (running / waiting / completed / failed) via content-free state projection.
 - Starts with the plugin and exits with DSH through Cordis lifecycle effects — no process residue.
@@ -44,19 +45,20 @@ A release bundle must include the compiled `native/` directory (see `files` in `
 
 ## Status mapping
 
-| DSH event | Petdex state |
+Only events verified against the official core docs and the installed Harness are observed:
+
+| DSH event (verified) | Petdex state |
 | --- | --- |
-| turn start | `jumping` |
-| LLM stream / tool result | `running` |
-| approval request | `waiting` |
-| turn end / assistant message | `waving` |
-| turn error / failed | `failed` |
-| review | `review` |
-| idle | `idle` |
+| `agent/status` = running | `running` |
+| `agent/status` = idle | `waving` (then settles to `idle`) |
+| `tools/result` | `running` briefly, then back to the agent status |
+| `approval/request` | `waiting` |
+| `agent/error` | `failed` |
+| no activity | `idle` |
 
 ## Privacy
 
-Only animation state names are sent to the pet process. No prompts, tool arguments, model output, or approval contents leave the Harness.
+Only animation state names are sent to the OS-level pet process. No prompts, tool arguments, model output, or approval contents leave the Harness for rendering. The quick-message bar sends your typed text into the selected DSH session through the official `sessionController.prompt` (it is a real message to the agent, not telemetry).
 
 ## License
 
