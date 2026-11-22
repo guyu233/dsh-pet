@@ -286,9 +286,11 @@ export default class PetRemoteService extends Service {
     }
   }
 
-  remove(slug) {
+  // Named `uninstall` (not `remove`): `remove` is a method on DSH's client
+  // RemoteNamespaceService prototype and would fail $mount validation.
+  uninstall(slug) {
     try {
-      this._requireTrustedCaller('remove')
+      this._requireTrustedCaller('uninstall')
       const safe = safeSlug(slug)
       if (!safe) return { ok: false, error: 'invalid slug' }
       if (this._cfg().petSlug === safe) return { ok: false, error: 'cannot remove the active pet' }
@@ -386,7 +388,7 @@ Object.defineProperty(PetRemoteService.prototype, REMOTE_METHOD_DESCRIPTOR, {
       { method: 'start', invocation: { kind: 'direct' } },
       { method: 'stop', invocation: { kind: 'direct' } },
       { method: 'download', invocation: { kind: 'direct' } },
-      { method: 'remove', invocation: { kind: 'direct' } },
+      { method: 'uninstall', invocation: { kind: 'direct' } },
       { method: 'sessions', invocation: { kind: 'direct' } },
       { method: 'send', invocation: { kind: 'direct' } },
       { method: 'stopSession', invocation: { kind: 'direct' } },

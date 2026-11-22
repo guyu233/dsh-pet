@@ -53,6 +53,16 @@ for (const m of hostMethods) {
 }
 check(hostMethods.length === clientMethods.length, 'Host/Client method counts match')
 
+// DSH RemoteNamespaceService reserved field/prototype names: a Remote method
+// with one of these fails `remote.$mount` with a name-conflict error.
+const RESERVED = new Set([
+  'ctx', 'empty', 'invokeRemote', 'methods', 'name', 'namespace',
+  'assertMethodAvailable', 'has', 'installDirect', 'installScoped', 'install', 'remove',
+])
+for (const m of hostMethods) {
+  check(!RESERVED.has(m), `Remote method '${m}' is not a reserved namespace name`)
+}
+
 // 4. Locale key parity (en/zh) for the pet dictionary
 const enKeys = Object.keys(en.pet ?? {}).sort()
 const zhKeys = Object.keys(zh.pet ?? {}).sort()

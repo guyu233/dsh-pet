@@ -71,7 +71,7 @@ window.__ModuleLoader__.load({
           { name: 'spriteUrl', codec: stringCodec('spriteUrl') },
           { name: 'meta', codec: objectCodec('meta') },
         ]),
-        method('remove', [{ name: 'slug', codec: stringCodec('slug') }]),
+        method('uninstall', [{ name: 'slug', codec: stringCodec('slug') }]),
         method('sessions'),
         method('send', [
           { name: 'sessionId', codec: stringCodec('sessionId') },
@@ -345,8 +345,8 @@ window.__ModuleLoader__.load({
         })
       }
 
-      async function remove(slug) {
-        await run('remove:' + slug, () => petNs.remove(slug))
+      async function uninstall(slug) {
+        await run('uninstall:' + slug, () => petNs.uninstall(slug))
       }
 
       // Fuzzy-ish search: split into tokens (AND), each token matches any
@@ -467,9 +467,9 @@ window.__ModuleLoader__.load({
                     tone: slug === pet.status.active ? 'primary' : undefined,
                   }, t('use')),
                   h(Button, {
-                    onClick: () => void remove(slug),
-                    disabled: !ready || busy === 'remove:' + slug || slug === pet.status.active,
-                  }, busy === 'remove:' + slug ? t('loading') : t('remove')),
+                    onClick: () => void uninstall(slug),
+                    disabled: !ready || busy === 'uninstall:' + slug || slug === pet.status.active,
+                  }, busy === 'uninstall:' + slug ? t('loading') : t('remove')),
                 ),
               )),
             ),
