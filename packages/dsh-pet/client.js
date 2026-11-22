@@ -414,6 +414,9 @@ window.__ModuleLoader__.load({
               h('div', { style: { color: T.text2, fontSize: 12, marginTop: 2 } }, t('homepageHint')),
             ),
           ),
+          h('div', {
+            style: { color: T.text2, fontSize: 11, marginTop: 10, borderTop: `1px solid ${T.border}`, paddingTop: 8 },
+          }, t('attribution')),
         ),
         h(Card, null,
           h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: T.text } }, t('title')),
@@ -700,6 +703,7 @@ window.__ModuleLoader__.load({
             downloading: 'Downloading...',
             downloadDone: 'Downloaded {name}. You can now use it.',
             homepage: 'Petdex.dev', homepageHint: 'Browse the full gallery and create pets on the official site.',
+            attribution: 'Unofficial plugin. Animation data and brand adapted from Petdex (MIT, © 2026 Crafter Station).',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -725,6 +729,7 @@ window.__ModuleLoader__.load({
             downloading: '下载中…',
             downloadDone: '已下载 {name}，现在可以使用了。',
             homepage: 'Petdex.dev 官网', homepageHint: '在官网浏览完整图鉴、制作宠物。',
+            attribution: '非官方插件。动画数据与标识借鉴自 Petdex（MIT，© 2026 Crafter Station）。',
           },
         }), 'dsh-pet: locale')
 

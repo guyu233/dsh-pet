@@ -22,3 +22,7 @@ The renderer is a small native binary (Win32 or AppKit) with no WebView or Node 
 ## Requirements
 
 A native binary must be present for your platform. Build it with `scripts/build-native.ps1`, or install a release that bundles it. Pet browsing requires network access to petdex.dev; installed pets are cached locally under `~/.dsh/pets/`.
+
+## Attribution
+
+Unofficial plugin, not affiliated with Petdex. The animation timing table, atlas geometry, brand mark and preview conventions are adapted from crafter-station/petdex (MIT, Copyright © 2026 Crafter Station). Pet artwork belongs to its submitters and is never redistributed here. Full notices and disclaimer: `docs/THIRD_PARTY_NOTICES.md`.

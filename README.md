@@ -80,6 +80,8 @@ Only events verified against the official core docs and the installed Harness ar
 
 Only animation state names are sent to the OS-level pet process. No prompts, tool arguments, model output, or approval contents leave the Harness for rendering. The quick-message bar sends your typed text into the selected DSH session through the official `sessionController.prompt` (it is a real message to the agent, not telemetry).
 
-## License
+## Attribution and license
 
-MIT. Pet artwork belongs to its Petdex submitters and is fetched from the public Petdex catalog at runtime.
+This is an independent, unofficial plugin. Parts of it (the animation timing table, atlas geometry, brand mark, manifest layout, and preview URL conventions) were adapted from [Petdex](https://github.com/crafter-station/petdex) under its MIT License (Copyright © 2026 Crafter Station). Pet artwork belongs to its respective submitters and is fetched at runtime, never redistributed.
+
+See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for the full attribution list, the original Petdex MIT notice, asset ownership, and the disclaimer. The project's own code is MIT (see [LICENSE](./LICENSE)).
