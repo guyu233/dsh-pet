@@ -240,7 +240,7 @@ export default class PetRemoteService extends Service {
     } catch (error) { return { ok: false, error: String(error?.message ?? error) } }
   }
 
-  async download(slug, spriteUrl) {
+  async download(slug, spriteUrl, meta) {
     try {
       this._requireTrustedCaller('download')
       const safe = safeSlug(slug)
@@ -261,8 +261,24 @@ export default class PetRemoteService extends Service {
       const bytes = Buffer.from(await response.arrayBuffer())
       if (bytes.length > 20 * 1024 * 1024) return { ok: false, error: 'asset too large' }
       writeFileSync(join(dir, 'spritesheet.webp'), bytes)
+      // Petdex-compatible pet.json: canonical field names so a downloaded
+      // pack could be used by other Petdex tooling later. `meta` comes from
+      // the public manifest when available.
+      const m = meta && typeof meta === 'object' ? meta : {}
+      const version = m.spriteVersionNumber === 1 ? 1 : 2
       writeFileSync(join(dir, 'pet.json'), JSON.stringify({
-        slug: safe, spriteVersionNumber: 2, source: `https://petdex.dev/pets/${safe}`,
+        slug: safe,
+        displayName: typeof m.displayName === 'string' ? m.displayName : safe,
+        kind: typeof m.kind === 'string' ? m.kind : 'creature',
+        submittedBy: typeof m.submittedBy === 'string' ? m.submittedBy : null,
+        spriteVersionNumber: version,
+        license: 'unspecified',
+        animationStates: [
+          'idle', 'running-right', 'running-left', 'waving', 'jumping',
+          'failed', 'waiting', 'running', 'review',
+        ],
+        spritesheet: 'spritesheet.webp',
+        source: `https://petdex.dev/pets/${safe}`,
       }, null, 2))
       return { ok: true }
     } catch (error) {

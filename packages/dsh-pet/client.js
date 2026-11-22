@@ -37,6 +37,7 @@ window.__ModuleLoader__.load({
     const stringCodec = name => codec(`${name}:string`, v => typeof v === 'string')
     const boolCodec = name => codec(`${name}:boolean`, v => typeof v === 'boolean')
     const numberCodec = name => codec(`${name}:number`, v => typeof v === 'number' && Number.isFinite(v))
+    const objectCodec = name => codec(`${name}:object`, v => v === undefined || (typeof v === 'object' && v !== null && !Array.isArray(v)))
 
     const method = (name, params = []) => ({
       id: `dsh-pet#pet/${name}`,
@@ -68,6 +69,7 @@ window.__ModuleLoader__.load({
         method('download', [
           { name: 'slug', codec: stringCodec('slug') },
           { name: 'spriteUrl', codec: stringCodec('spriteUrl') },
+          { name: 'meta', codec: objectCodec('meta') },
         ]),
         method('remove', [{ name: 'slug', codec: stringCodec('slug') }]),
         method('sessions'),
@@ -235,8 +237,10 @@ window.__ModuleLoader__.load({
             spriteVersionNumber: p.spriteVersionNumber || 1,
             spriteUrl: assetUrl({ ...p, assetBase: base }),
             // Petdex publishes a dedicated 80x80 single-frame thumbnail per
-            // pet; use it for the grid instead of cropping the full atlas.
+            // Petdex publishes a 80x80 single-frame thumb and a 6-frame
+            // animated preview strip; use both (preview animates on hover).
             thumbUrl: `${String(base || ASSET_BASE).replace(/\/+$/, '')}/pets/${p.slug}/thumb.webp`,
+            previewUrl: `${String(base || ASSET_BASE).replace(/\/+$/, '')}/pets/${p.slug}/preview.webp`,
           })).filter(p => p.slug && p.spriteUrl.startsWith('https://'))
           setPets(list)
         } catch (e) {
@@ -245,6 +249,31 @@ window.__ModuleLoader__.load({
       }, [])
       useEffect(() => { void load() }, [load])
       return { pets, loading, error, reload: load }
+    }
+
+    // One shared keyframes rule for the hover preview (6-frame strip).
+    function PreviewStyle() {
+      return h('style', null,
+        '@keyframes dshPetPreview{from{background-position:0 0}to{background-position:-192px 0}}')
+    }
+
+    // Static thumb; on hover plays Petdex's 6-frame preview.webp via steps().
+    function PetThumb({ pet }) {
+      const [animate, setAnimate] = useState(false)
+      return h('div', {
+        onMouseEnter: () => setAnimate(true),
+        onMouseLeave: () => setAnimate(false),
+        style: {
+          width: 32, height: 32, flexShrink: 0, borderRadius: 4,
+          backgroundImage: `url("${animate ? pet.previewUrl : pet.thumbUrl}")`,
+          backgroundSize: animate ? '600% 100%' : 'contain',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: animate ? '0 0' : 'center',
+          imageRendering: 'pixelated',
+          animation: animate ? 'dshPetPreview 0.9s steps(6, end) infinite' : 'none',
+          backgroundColor: 'var(--dsw-alias-bg-tertiary, rgba(128,128,128,0.12))',
+        },
+      })
     }
 
     function PetSettings({ t }) {
@@ -308,7 +337,10 @@ window.__ModuleLoader__.load({
 
       // "Download": show a clear in-progress state, then auto-activate on success.
       async function download(p) {
-        await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl), () => {
+        await run('download:' + p.slug, () => petNs.download(p.slug, p.spriteUrl, {
+          displayName: p.displayName, kind: p.kind,
+          submittedBy: p.submittedBy, spriteVersionNumber: p.spriteVersionNumber,
+        }), () => {
           setMsg(t('downloadDone', { name: p.displayName }))
         })
       }
@@ -317,25 +349,20 @@ window.__ModuleLoader__.load({
         await run('remove:' + slug, () => petNs.remove(slug))
       }
 
-      const thumb = (url) => h('img', {
-        src: url, alt: '', width: 32, height: 32,
-        style: {
-          imageRendering: 'pixelated', objectFit: 'contain',
-          borderRadius: 4, flexShrink: 0,
-          background: T.field,
-        },
-        onError: (e) => { e.currentTarget.style.visibility = 'hidden' },
-      })
-
-      // Case-insensitive fuzzy substring search over the useful fields.
-      const q = query.trim().toLowerCase()
-      const filtered = q
-        ? catalog.pets.filter(p =>
-            [p.slug, p.displayName, p.submittedBy, p.kind].some(v =>
-              String(v || '').toLowerCase().includes(q)))
+      // Fuzzy-ish search: split into tokens (AND), each token matches any
+      // field as a substring. Petdex's server does ILIKE + embeddings; the
+      // client can only do tokenised substring matching.
+      const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+      const filtered = tokens.length
+        ? catalog.pets.filter(p => {
+            const hay = [p.slug, p.displayName, p.submittedBy, p.kind]
+              .map(v => String(v || '').toLowerCase())
+            return tokens.every(tk => hay.some(field => field.includes(tk)))
+          })
         : catalog.pets
 
       return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 720 } },
+        h(PreviewStyle),
         !ready ? h('div', {
           style: {
             padding: '8px 12px', color: T.danger, fontSize: 13,
@@ -485,7 +512,7 @@ window.__ModuleLoader__.load({
                   border: `1px solid ${T.border}`, borderRadius: T.radius,
                 },
               },
-                thumb(p.thumbUrl),
+                h(PetThumb, { pet: p }),
                 h('div', { style: { flex: 1, minWidth: 0 } },
                   h('div', {
                     style: { color: T.text, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },

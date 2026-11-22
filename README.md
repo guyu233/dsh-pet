@@ -8,7 +8,9 @@ A DeepSeek Harness plugin that shows a floating [Petdex](https://petdex.dev) pix
 - Settings → **Desk pet** section: browse the Petdex catalog with live fuzzy search (name, slug, author, kind), real per-pet preview thumbnails, download, switch and remove pets.
 - **Quick message bar**: pick a session, send a message (Enter), or stop the current turn — via the official `sessionController.prompt/cancel`.
 - Host↔Client communication rides DSH's official Typert Remote gateway (`remote.pet`) — no loopback HTTP server.
-- Reacts to session events (running / waiting / completed / failed) via content-free state projection.
+- Reacts to session events (running / waiting / completed / failed) via content-free state projection, with the **official Petdex animation timing table** (per-state frame counts and durations, including idle's irregular blink) ported from Petdex's `sprite.zig`.
+- Catalog previews use Petdex's official `thumb.webp` (static) and `preview.webp` (6-frame strip, plays on hover); downloaded pets carry a Petdex-compatible `pet.json`.
+- Tokenised fuzzy search (space-separated terms, AND-matched across name/slug/author/kind).
 - Starts with the plugin and exits with DSH through Cordis lifecycle effects — no process residue.
 - Runtime catalog fetch means the plugin package stays tiny.
 

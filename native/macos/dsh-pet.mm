@@ -11,18 +11,40 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <errno.h>
 
-static const char *STATE_NAMES[9] = {
-  "idle", "running-right", "running-left", "waving", "jumping",
-  "failed", "waiting", "running", "review"
+// Petdex canonical animation table, ported from sprite.zig.
+// Each row = { frame count, per-frame durations in ms }.
+typedef struct { NSInteger count; NSInteger durs[8]; } StateDef;
+static const StateDef STATES[9] = {
+  { 6, { 280,110,110,140,140,320,0,0 } },   // idle (irregular blink)
+  { 8, { 120,120,120,120,120,120,120,220 } },// running-right
+  { 8, { 120,120,120,120,120,120,120,220 } },// running-left
+  { 4, { 140,140,140,280,0,0,0,0 } },       // waving
+  { 5, { 140,140,140,140,280,0,0,0 } },     // jumping
+  { 8, { 140,140,140,140,140,140,140,240 } },// failed
+  { 6, { 150,150,150,150,150,260,0,0 } },   // waiting
+  { 6, { 120,120,120,120,120,220,0,0 } },   // running
+  { 6, { 150,150,150,150,150,280,0,0 } },   // review
 };
+static NSInteger rowForState(const char *name) {
+  static const char *names[9] = {
+    "idle","running-right","running-left","waving","jumping",
+    "failed","waiting","running","review"
+  };
+  if (!name) return -1;
+  for (NSInteger i = 0; i < 9; i++) if (strcasecmp(name, names[i]) == 0) return i;
+  return -1;
+}
+#define TICK_MS 20
 
 @interface PetView : NSView
 @property (nonatomic, strong) NSImage *atlas;
 @property (nonatomic, assign) NSInteger row;
 @property (nonatomic, assign) NSInteger frame;
+@property (nonatomic, assign) NSInteger frameElapsed;
 @property (nonatomic, assign) CGFloat scale;
 @end
 
@@ -36,7 +58,8 @@ static const char *STATE_NAMES[9] = {
   CGFloat fw = size.width / 8.0;
   CGFloat fh = size.height / 9.0;
   if (fw <= 0 || fh <= 0) return;
-  if (self.frame >= 8) self.frame = 0;
+  NSInteger count = STATES[self.row].count;
+  if (self.frame >= count) self.frame = 0;
 
   NSRect src = NSMakeRect(self.frame * fw, self.row * fh, fw, fh);
   NSRect dst = NSMakeRect(0, 0, fw * self.scale, fh * self.scale);
@@ -56,14 +79,13 @@ static const char *STATE_NAMES[9] = {
 
 @implementation AppDelegate
 
-- (void)setStateLine:(const char *)line {
-  for (int i = 0; i < 9; i++) {
-    if (strcasecmp(line, STATE_NAMES[i]) == 0) {
-      self.petView.row = i;
-      self.petView.frame = 0;
-      [self.petView setNeedsDisplay:YES];
-      return;
-    }
+- (void)setStateLine:(NSString *)line {
+  NSInteger row = rowForState([line UTF8String]);
+  if (row >= 0) {
+    self.petView.row = row;
+    self.petView.frame = 0;
+    self.petView.frameElapsed = 0;
+    [self.petView setNeedsDisplay:YES];
   }
 }
 
@@ -72,8 +94,10 @@ static const char *STATE_NAMES[9] = {
   while (fgets(buf, sizeof(buf), stdin)) {
     char *line = strtok(buf, "\r\n");
     while (line) {
+      // Copy before dispatch: the stack buffer is reused by the next fgets.
+      NSString *copy = [NSString stringWithUTF8String:line];
       dispatch_async(dispatch_get_main_queue(), ^{
-        [self setStateLine:line];
+        [self setStateLine:copy];
       });
       line = strtok(NULL, "\r\n");
     }
@@ -81,8 +105,15 @@ static const char *STATE_NAMES[9] = {
 }
 
 - (void)tick:(NSTimer *)timer {
-  self.petView.frame = (self.petView.frame + 1) % 8;
-  [self.petView setNeedsDisplay:YES];
+  const StateDef *def = &STATES[self.petView.row];
+  NSInteger dur = def->durs[self.petView.frame];
+  if (dur <= 0) dur = 120;
+  self.petView.frameElapsed += TICK_MS;
+  if (self.petView.frameElapsed >= dur) {
+    self.petView.frameElapsed = 0;
+    self.petView.frame = (self.petView.frame + 1) % def->count;
+    [self.petView setNeedsDisplay:YES];
+  }
 }
 
 - (void)watchdogTick:(NSTimer *)timer {
@@ -150,7 +181,8 @@ static const char *STATE_NAMES[9] = {
   [self.window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:NO];
 
-  self.interval = intervalMs / 1000.0;
+  (void)intervalMs; // preserved arg for CLI compatibility; timing uses the state table
+  self.interval = TICK_MS / 1000.0;
   self.timer = [NSTimer scheduledTimerWithTimeInterval:self.interval
       target:self selector:@selector(tick:) userInfo:nil repeats:YES];
   self.watchdog = [NSTimer scheduledTimerWithTimeInterval:0.2

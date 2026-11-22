@@ -33,12 +33,41 @@
 #define FRAME_H 208
 #define COLS 8
 #define ROWS 9
-#define DEFAULT_TIMER_MS 120
+#define MAX_FRAMES 8
+#define TICK_MS 20          /* fine clock; frames hold per their own duration */
 
-/* Petdex state rows (v1/v2 share the first nine rows). */
-static const char *STATE_NAMES[ROWS] = {
-  "idle", "running-right", "running-left", "waving", "jumping",
-  "failed", "waiting", "running", "review"
+/* Petdex canonical animation table, ported from
+ * crafter-station/petdex packages/petdex-desktop-native/src/sprite.zig.
+ * Each state: frame count, per-frame durations (ms). The last frame of a
+ * uniform loop holds longer; idle is intentionally irregular (blink timing). */
+typedef struct {
+  const char *name;
+  int count;
+  const int *durs;          /* length == count, or NULL for uniform */
+  int uniform_ms;           /* used when durs == NULL */
+  int last_ms;              /* last-frame duration for uniform states */
+} StateDef;
+
+static const int D_IDLE[] = { 280, 110, 110, 140, 140, 320 };
+static const int D_UNIFORM_8_120[] = { 120,120,120,120,120,120,120,220 };
+static const int D_UNIFORM_4_140[] = { 140,140,140,280 };
+static const int D_UNIFORM_5_140[] = { 140,140,140,140,280 };
+static const int D_UNIFORM_8_140[] = { 140,140,140,140,140,140,140,240 };
+static const int D_UNIFORM_6_150[] = { 150,150,150,150,150,260 };
+static const int D_UNIFORM_6_120[] = { 120,120,120,120,120,220 };
+static const int D_UNIFORM_6_150R[] = { 150,150,150,150,150,280 };
+
+/* Index == atlas row. Order must match the sprite sheet. */
+static const StateDef STATE_DEFS[ROWS] = {
+  { "idle",           6, D_IDLE,          0, 0 },
+  { "running-right",  8, D_UNIFORM_8_120, 0, 0 },
+  { "running-left",   8, D_UNIFORM_8_120, 0, 0 },
+  { "waving",         4, D_UNIFORM_4_140, 0, 0 },
+  { "jumping",        5, D_UNIFORM_5_140, 0, 0 },
+  { "failed",         8, D_UNIFORM_8_140, 0, 0 },
+  { "waiting",        6, D_UNIFORM_6_150, 0, 0 },
+  { "running",        6, D_UNIFORM_6_120, 0, 0 },
+  { "review",         6, D_UNIFORM_6_150R,0, 0 },
 };
 
 typedef struct {
@@ -53,6 +82,7 @@ typedef struct {
   int opacityPct;
   int row;
   int frame;
+  int frameElapsed;         /* ms elapsed in the current frame */
   UINT timerMs;
   wchar_t petDir[MAX_PATH];
   DWORD parentPid;
@@ -68,9 +98,21 @@ static PetCtx g;
 static int rowForState(const char *name) {
   if (!name) return -1;
   for (int i = 0; i < ROWS; i++) {
-    if (_stricmp(name, STATE_NAMES[i]) == 0) return i;
+    if (_stricmp(name, STATE_DEFS[i].name) == 0) return i;
   }
   return -1;
+}
+
+/* Advance one animation step using the state's own frame durations. */
+static void advanceFrame(void) {
+  const StateDef *def = &STATE_DEFS[g.row];
+  int dur = def->durs ? def->durs[g.frame % def->count] : def->uniform_ms;
+  if (dur <= 0) dur = 120;
+  g.frameElapsed += TICK_MS;
+  if (g.frameElapsed >= dur) {
+    g.frameElapsed = 0;
+    g.frame = (g.frame + 1) % def->count;
+  }
 }
 
 static void fail(const wchar_t *msg) {
@@ -170,7 +212,8 @@ static void drawFrame(void) {
   int fw = g.atlasW / COLS;
   int fh = g.atlasH / ROWS;
   if (fw <= 0 || fh <= 0) return;
-  if (g.frame >= COLS) g.frame = 0;
+  const StateDef *def = &STATE_DEFS[g.row];
+  if (g.frame >= def->count) g.frame = 0;
 
   HDC screen = GetDC(NULL);
   HDC src = CreateCompatibleDC(screen);
@@ -204,7 +247,7 @@ static void drawFrame(void) {
 static LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_TIMER:
-      g.frame = (g.frame + 1) % COLS;
+      advanceFrame();
       drawFrame();
       return 0;
     case WM_DESTROY:
@@ -234,6 +277,7 @@ static DWORD WINAPI stdinThread(LPVOID unused) {
       if (row >= 0) {
         g.row = row;
         g.frame = 0;
+        g.frameElapsed = 0;
         drawFrame();
       }
       line = strtok(NULL, "\r\n");
@@ -295,7 +339,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE hPrev, PWSTR cmd, int nCmdShow) {
   drawFrame();
 
   g.stdinThread = CreateThread(NULL, 0, stdinThread, NULL, 0, NULL);
-  SetTimer(g.hwnd, 1, g.timerMs ? g.timerMs : DEFAULT_TIMER_MS, NULL);
+  SetTimer(g.hwnd, 1, TICK_MS, NULL);
 
   if (g.parentPid) {
     g.parentHandle = OpenProcess(SYNCHRONIZE, FALSE, g.parentPid);
