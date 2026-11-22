@@ -268,6 +268,20 @@ window.__ModuleLoader__.load({
 
       const ready = Boolean(petNs) && !mountError
 
+      function openHomepage() {
+        try {
+          if (typeof window !== 'undefined' && typeof window.open === 'function') {
+            const w = window.open('https://petdex.dev/', '_blank', 'noopener,noreferrer')
+            if (w) return
+          }
+        } catch { /* fall through to anchor */ }
+        const a = document.createElement('a')
+        a.href = 'https://petdex.dev/'
+        a.target = '_blank'
+        a.rel = 'noopener noreferrer'
+        a.click()
+      }
+
       async function run(label, fn, after) {
         setBusy(label); setMsg('')
         try {
@@ -334,6 +348,46 @@ window.__ModuleLoader__.load({
             background: T.field, borderRadius: T.radius,
           },
         }, msg) : null,
+        h(Card, null,
+          h('div', {
+            onClick: openHomepage,
+            role: 'link', tabIndex: 0,
+            onKeyDown: (e) => { if (e.key === 'Enter' || e.key === ' ') openHomepage() },
+            style: {
+              display: 'flex', alignItems: 'center', gap: 12,
+              cursor: 'pointer', textDecoration: 'none',
+            },
+          },
+            h('svg', {
+              width: 32, height: 32, viewBox: '0 0 64 64', 'aria-hidden': true,
+              style: { flexShrink: 0 },
+            },
+              h('defs', null,
+                h('linearGradient', {
+                  id: 'dshPetHomeGrad', x1: '8', y1: '8', x2: '56', y2: '56',
+                  gradientUnits: 'userSpaceOnUse',
+                },
+                  h('stop', { stopColor: '#3847f5' }),
+                  h('stop', { offset: '1', stopColor: '#1a1d2e' }),
+                ),
+              ),
+              h('rect', { x: 4, y: 4, width: 56, height: 56, rx: 16, fill: 'url(#dshPetHomeGrad)' }),
+              h('g', { fill: '#ffffff' },
+                h('rect', { x: 22, y: 20, width: 6, height: 6 }),
+                h('rect', { x: 36, y: 20, width: 6, height: 6 }),
+                h('rect', { x: 16, y: 26, width: 6, height: 18 }),
+                h('rect', { x: 42, y: 26, width: 6, height: 18 }),
+                h('rect', { x: 22, y: 38, width: 20, height: 6 }),
+              ),
+            ),
+            h('div', { style: { flex: 1, minWidth: 0 } },
+              h('div', {
+                style: { color: T.accent, fontSize: 14, fontWeight: 600, textDecoration: 'underline' },
+              }, t('homepage')),
+              h('div', { style: { color: T.text2, fontSize: 12, marginTop: 2 } }, t('homepageHint')),
+            ),
+          ),
+        ),
         h(Card, null,
           h('h3', { style: { margin: '0 0 8px', fontSize: 16, color: T.text } }, t('title')),
           h(Row, { title: t('enabled'), hint: t('enabledHint') },
@@ -618,6 +672,7 @@ window.__ModuleLoader__.load({
             notReady: 'The Host bridge is not ready. Confirm the plugin row is enabled and the Host half loaded.',
             downloading: 'Downloading...',
             downloadDone: 'Downloaded {name}. You can now use it.',
+            homepage: 'Petdex.dev', homepageHint: 'Browse the full gallery and create pets on the official site.',
           },
           zh: {
             title: '桌宠', enabled: '启用桌宠',
@@ -642,6 +697,7 @@ window.__ModuleLoader__.load({
             notReady: 'Host 桥接尚未就绪。请确认插件行已启用且 Host 半身已加载。',
             downloading: '下载中…',
             downloadDone: '已下载 {name}，现在可以使用了。',
+            homepage: 'Petdex.dev 官网', homepageHint: '在官网浏览完整图鉴、制作宠物。',
           },
         }), 'dsh-pet: locale')
 
@@ -662,16 +718,18 @@ window.__ModuleLoader__.load({
         ctx.slots.inject('settings.section.icon', () => ctx.slots.register({
           name: 'settings.section.icon', id: 'dsh-pet', locale: NS,
         }, ({ size }) => h('svg', {
-          width: size, height: size, viewBox: '0 0 16 16', 'aria-hidden': true,
-          fill: 'none', stroke: 'currentColor', strokeWidth: 1.2,
-          strokeLinecap: 'round', strokeLinejoin: 'round',
+          width: size, height: size, viewBox: '0 0 64 64', 'aria-hidden': true,
         },
-          // cat head: two ears + rounded face, stroked so it reads in both themes
-          h('path', { d: 'M3 5.2 L2.7 2.4 L5.4 4.4 M13 5.2 L13.3 2.4 L10.6 4.4' }),
-          h('path', { d: 'M8 4.2 C4.9 4.2 3 6 3 8.4 C3 11.2 4.9 13 8 13 C11.1 13 13 11.2 13 8.4 C13 6 11.1 4.2 8 4.2 Z' }),
-          h('circle', { cx: 6, cy: 8.4, r: 0.75, fill: 'currentColor', stroke: 'none' }),
-          h('circle', { cx: 10, cy: 8.4, r: 0.75, fill: 'currentColor', stroke: 'none' }),
-          h('path', { d: 'M6.9 10.6 Q8 11.4 9.1 10.6' }),
+          // Official Petdex mark: rounded tile + pixel face, tinted with
+          // currentColor so it stays legible in light and dark themes.
+          h('rect', { x: 4, y: 4, width: 56, height: 56, rx: 16, fill: 'currentColor', opacity: 0.18 }),
+          h('g', { fill: 'currentColor' },
+            h('rect', { x: 22, y: 20, width: 6, height: 6 }),
+            h('rect', { x: 36, y: 20, width: 6, height: 6 }),
+            h('rect', { x: 16, y: 26, width: 6, height: 18 }),
+            h('rect', { x: 42, y: 26, width: 6, height: 18 }),
+            h('rect', { x: 22, y: 38, width: 20, height: 6 }),
+          ),
         )))
       },
     }

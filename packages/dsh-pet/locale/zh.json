@@ -43,6 +43,8 @@
     "resultCount": "共 {count} 只宠物",
     "notReady": "Host 桥接尚未就绪。请确认插件行已启用且 Host 半身已加载。",
     "downloading": "下载中…",
-    "downloadDone": "已下载 {name}，现在可以使用了。"
+    "downloadDone": "已下载 {name}，现在可以使用了。",
+    "homepage": "Petdex.dev 官网",
+    "homepageHint": "在官网浏览完整图鉴、制作宠物。"
   }
 }

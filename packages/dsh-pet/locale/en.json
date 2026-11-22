@@ -43,6 +43,8 @@
     "resultCount": "{count} pets",
     "notReady": "The Host bridge is not ready. Confirm the plugin row is enabled and the Host half loaded.",
     "downloading": "Downloading...",
-    "downloadDone": "Downloaded {name}. You can now use it."
+    "downloadDone": "Downloaded {name}. You can now use it.",
+    "homepage": "Petdex.dev",
+    "homepageHint": "Browse the full gallery and create pets on the official site."
   }
 }
