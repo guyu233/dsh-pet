@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "title": "桌宠",
+    "description": "会跟随 DeepSeek Harness 会话状态变化的 Petdex 像素桌宠。",
+    "detail": "docs/DETAIL.md"
+  },
+  "pet": {
+    "title": "桌宠",
+    "enabled": "启用桌宠",
+    "enabledHint": "随 DeepSeek Harness 启动原生悬浮桌宠进程。",
+    "petSlug": "宠物",
+    "petSlugHint": "要显示的 Petdex slug，请先从下方目录下载。",
+    "scale": "大小",
+    "opacity": "不透明度",
+    "refresh": "刷新目录",
+    "catalog": "Petdex 宠物目录",
+    "catalogHint": "浏览 petdex.dev 已通过的宠物，下载保存到 ~/.dsh/pets/<slug>。",
+    "installed": "已安装桌宠",
+    "installedHint": "已经下载到本地的宠物。",
+    "download": "下载",
+    "use": "使用",
+    "remove": "卸载",
+    "active": "使用中",
+    "loading": "加载中…",
+    "empty": "没有找到宠物。",
+    "statusRunning": "运行中",
+    "statusStopped": "已停止",
+    "statusError": "错误",
+    "nativeMissing": "当前平台尚未编译原生桌宠程序。",
+    "browse": "在 petdex.dev 打开",
+    "save": "保存更改",
+    "discard": "放弃更改",
+    "saved": "已保存",
+    "saveFailed": "保存失败"
+  }
+}

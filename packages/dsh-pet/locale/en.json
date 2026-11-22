@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "title": "Desk pet",
+    "description": "Floating Petdex pixel companions that react to the current DeepSeek Harness session.",
+    "detail": "docs/DETAIL.md"
+  },
+  "pet": {
+    "title": "Desk pet",
+    "enabled": "Enable desk pet",
+    "enabledHint": "Start the native floating pet process with DeepSeek Harness.",
+    "petSlug": "Pet",
+    "petSlugHint": "Petdex slug to display. Install from the catalog below first.",
+    "scale": "Size",
+    "opacity": "Opacity",
+    "refresh": "Refresh catalog",
+    "catalog": "Petdex catalog",
+    "catalogHint": "Browse approved pets from petdex.dev. Download writes to ~/.dsh/pets/<slug>.",
+    "installed": "Installed pets",
+    "installedHint": "Pets already downloaded locally.",
+    "download": "Download",
+    "use": "Use",
+    "remove": "Remove",
+    "active": "Active",
+    "loading": "Loading...",
+    "empty": "No pets found.",
+    "statusRunning": "Running",
+    "statusStopped": "Stopped",
+    "statusError": "Error",
+    "nativeMissing": "Native pet binary is not built for this platform yet.",
+    "browse": "Open on petdex.dev",
+    "save": "Save changes",
+    "discard": "Discard",
+    "saved": "Saved",
+    "saveFailed": "Save failed"
+  }
+}

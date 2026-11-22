@@ -1,0 +1,9 @@
+- insert:
+    - id: dsh-pet
+      name: '@guyu233/dsh-pet'
+      config:
+        enabled: false
+        petSlug: boba
+        scale: 100
+        opacity: 85
+        stateIntervalMs: 120
