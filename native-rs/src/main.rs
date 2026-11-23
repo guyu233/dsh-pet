@@ -10,7 +10,7 @@ mod windowproc;
 
 use win32::*;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 // Use the library modules (same code, compiled into this binary).
 use dsh_pet_native::core::{PetAnimationEngine, PetState, BubbleEntry, SessionStatus};
@@ -21,12 +21,14 @@ use crate::ui::LayeredSurface;
 use crate::windowproc::{BubbleView, MenuCtx, menu_wndproc, bubble_wndproc, show_menu, show_bubble, bubble_size};
 
 const TIMER_ID: UINT = 1;
+const WM_APP_STATE: UINT = 0x8001;
 const TICK_MS: u32 = 20;
 const FRAME_W: i32 = 192;
 const FRAME_H: i32 = 208;
 const COLS: i32 = 8;
 const ROWS: i32 = 9;
 static QUITTING: AtomicI32 = AtomicI32::new(0);
+static PET_HWND: AtomicUsize = AtomicUsize::new(0);
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -184,6 +186,15 @@ unsafe fn present(s: &mut AppState) {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let s = &mut *STATE;
     match msg {
+        WM_APP_STATE => {
+            // State/bubble lines arrive from the stdin thread via PostMessage
+            // so all GDI + STATE mutation happens on the UI thread only.
+            if lp != 0 {
+                let line = Box::from_raw(lp as *mut String);
+                handle_state_line(s, &line);
+            }
+            0
+        }
         WM_TIMER => {
             let now = now_ms();
             let dt = (now - s.last_tick).min(200) as u32;
@@ -282,37 +293,46 @@ unsafe fn stdin_loop() {
         while let Some(pos) = acc.iter().position(|&b| b == b'\n') {
             let line = String::from_utf8_lossy(&acc[..pos]).trim().to_string();
             acc.drain(..=pos);
-            let s = &mut *STATE;
-            if let Some(rest) = line.strip_prefix("bubble:") {
-                // bubble:<status>|<text>  (status: idle|needs-input|running|completed|failed)
-                let (status_str, text) = rest.split_once('|').unwrap_or((rest, ""));
-                let status = match status_str.trim().to_ascii_lowercase().as_str() {
-                    "needs-input" | "waiting" => SessionStatus::NeedsInput,
-                    "running" => SessionStatus::Running,
-                    "completed" | "done" => SessionStatus::Completed,
-                    "failed" | "error" => SessionStatus::Failed,
-                    _ => SessionStatus::Idle,
-                };
-                if let Some(win) = s.bubble_win.as_ref() {
-                    let (bw, bh) = bubble_size();
-                    let mut rect = RECT::default(); GetWindowRect(s.hwnd, &mut rect);
-                    let mut work = RECT::default();
-                    SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0);
-                    let (x, y) = compute_bubble_placement(rect.left, rect.top,
-                        rect.right-rect.left, rect.bottom-rect.top, bw, bh,
-                        work.left, work.top, work.right, work.bottom);
-                    SetWindowPos(win.hwnd, HWND_TOPMOST, x, y, 0, 0,
-                        SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
-                    show_bubble(win, &BubbleView {
-                        title: if text.is_empty() { status.summary().to_string() } else { text.to_string() },
-                        status, session_id: String::new(),
-                    });
-                }
-            } else if let Some(state) = PetState::from_slug(&line) {
-                s.anim.set_state(state);
-                present(s);
+            // Marshal to the UI thread: STATE and all GDI calls must stay on it.
+            let hwnd = PET_HWND.load(Ordering::Acquire) as HWND;
+            if hwnd.is_null() { break }
+            let boxed = Box::into_raw(Box::new(line)) as isize;
+            if PostMessageW(hwnd, WM_APP_STATE, 0, boxed) == 0 {
+                drop(Box::from_raw(boxed as *mut String)); // failed post: reclaim
             }
         }
+    }
+}
+
+/// Handle a state/bubble line on the UI thread (called from wndproc WM_APP_STATE).
+unsafe fn handle_state_line(s: &mut AppState, line: &str) {
+    if let Some(rest) = line.strip_prefix("bubble:") {
+        let (status_str, text) = rest.split_once('|').unwrap_or((rest, ""));
+        let status = match status_str.trim().to_ascii_lowercase().as_str() {
+            "needs-input" | "waiting" => SessionStatus::NeedsInput,
+            "running" => SessionStatus::Running,
+            "completed" | "done" => SessionStatus::Completed,
+            "failed" | "error" => SessionStatus::Failed,
+            _ => SessionStatus::Idle,
+        };
+        if let Some(win) = s.bubble_win.as_ref() {
+            let (bw, bh) = bubble_size();
+            let mut rect = RECT::default(); GetWindowRect(s.hwnd, &mut rect);
+            let mut work = RECT::default();
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0);
+            let (x, y) = compute_bubble_placement(rect.left, rect.top,
+                rect.right-rect.left, rect.bottom-rect.top, bw, bh,
+                work.left, work.top, work.right, work.bottom);
+            SetWindowPos(win.hwnd, HWND_TOPMOST, x, y, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+            show_bubble(win, &BubbleView {
+                title: if text.is_empty() { status.summary().to_string() } else { text.to_string() },
+                status, session_id: String::new(),
+            });
+        }
+    } else if let Some(state) = PetState::from_slug(line) {
+        s.anim.set_state(state);
+        present(s);
     }
 }
 
@@ -397,6 +417,7 @@ fn main() {
             null_mut(), null_mut(), hinst, null_mut());
         if hwnd.is_null() { eprintln!("CreateWindowExW failed"); return }
         state.hwnd = hwnd;
+        PET_HWND.store(hwnd as usize, Ordering::Release);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         SetWindowPos(hwnd, HWND_TOPMOST, px, py, fw, fh, SWP_NOACTIVATE | SWP_NOZORDER);
         present(&mut state);

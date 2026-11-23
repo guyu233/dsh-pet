@@ -131,6 +131,7 @@ extern "system" {
     pub fn TranslateMessage(msg: *const MSG) -> BOOL;
     pub fn DispatchMessageW(msg: *const MSG) -> LRESULT;
     pub fn PostQuitMessage(code: i32);
+    pub fn PostMessageW(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> BOOL;
     pub fn DefWindowProcW(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM) -> LRESULT;
     pub fn DestroyWindow(hwnd: HWND) -> BOOL;
     pub fn SystemParametersInfoW(action: u32, param: u32, pvParam: *mut c_void, fWinIni: u32) -> BOOL;
