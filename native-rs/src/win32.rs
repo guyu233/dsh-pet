@@ -139,6 +139,26 @@ extern "system" {
     pub fn GetSystemMetrics(index: i32) -> i32;
 }
 
+// GDI stock objects / text modes for the menu and bubble windows.
+pub const TRANSPARENT: i32 = 1;
+pub const DEFAULT_GUI_FONT: i32 = 17;
+pub const FW_NORMAL: u32 = 400;
+pub const ANSI_CHARSET: u8 = 0;
+pub const OUT_TT_PRECIS: u8 = 4;
+pub const CLIP_DEFAULT_PRECIS: u8 = 0;
+pub const DEFAULT_QUALITY: u8 = 0;
+pub const DEFAULT_PITCH: u8 = 2;
+pub const FF_DONTCARE: u8 = 0;
+
+#[repr(C)]
+pub struct LOGFONTW {
+    pub lfHeight: i32, pub lfWidth: i32, pub lfEscapement: i32, pub lfOrientation: i32,
+    pub lfWeight: i32, pub lfItalic: u8, pub lfUnderline: u8, pub lfStrikeOut: u8,
+    pub lfCharSet: u8, pub lfOutPrecision: u8, pub lfClipPrecision: u8,
+    pub lfQuality: u8, pub lfPitchAndFamily: u8, pub lfFaceName: [u16; 32],
+}
+
+
 #[link(name = "gdi32")]
 extern "system" {
     pub fn CreateCompatibleDC(hdc: HDC) -> HDC;
@@ -153,6 +173,11 @@ extern "system" {
     pub fn ReleaseDC(hwnd: HWND, hdc: HDC) -> i32;
     pub fn UpdateLayeredWindow(hwnd: HWND, hdcDst: HDC, pptDst: *const POINT, psize: *const SIZE,
         hdcSrc: HDC, pptSrc: *const POINT, crKey: u32, pblend: *const BLENDFUNCTION, dwFlags: u32) -> BOOL;
+    pub fn TextOutW(hdc: HDC, x: i32, y: i32, text: *const u16, len: i32) -> BOOL;
+    pub fn SetTextColor(hdc: HDC, color: u32) -> u32;
+    pub fn SetBkMode(hdc: HDC, mode: i32) -> i32;
+    pub fn GetStockObject(index: i32) -> HANDLE;
+    pub fn CreateFontIndirectW(lf: *const LOGFONTW) -> HANDLE;
 }
 
 #[link(name = "kernel32")]

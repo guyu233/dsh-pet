@@ -5,16 +5,20 @@
 
 mod win32;
 mod wic;
+mod ui;
+mod windowproc;
 
 use win32::*;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 // Use the library modules (same code, compiled into this binary).
-use dsh_pet_native::core::{PetAnimationEngine, PetState, BubbleEntry};
+use dsh_pet_native::core::{PetAnimationEngine, PetState, BubbleEntry, SessionStatus};
 use dsh_pet_native::physics::PetPhysics;
-use dsh_pet_native::menu::{build_default_menu_entries, compute_menu_layout, PopupMenuEntry};
+use dsh_pet_native::menu::{build_default_menu_entries, compute_menu_layout, PopupMenuEntry, CMD_SHUFFLE_PET, CMD_OPEN_SETTINGS};
 use dsh_pet_native::bubble::{compute_bubble_placement, BubbleContent};
+use crate::ui::LayeredSurface;
+use crate::windowproc::{BubbleView, MenuCtx, menu_wndproc, bubble_wndproc, show_menu, show_bubble, bubble_size};
 
 const TIMER_ID: UINT = 1;
 const TICK_MS: u32 = 20;
@@ -76,9 +80,61 @@ struct AppState {
     physics: PetPhysics,
     last_tick: u64,
     bubbles: Vec<BubbleEntry>,
+    menu: Option<LayeredSurface>,
+    bubble_win: Option<LayeredSurface>,
+    menu_ctx: MenuCtx,
+    always_on_top: bool,
+    focus_mode: bool,
 }
 
 static mut STATE: *mut AppState = std::ptr::null_mut();
+
+/// Right-click menu command handler (petdex commands adapted for DSH).
+unsafe extern "system" fn on_menu_command(cmd: usize) {
+    use dsh_pet_native::menu::*;
+    let s = &mut *STATE;
+    match cmd {
+        CMD_TOGGLE_TOPMOST => {
+            s.always_on_top = !s.always_on_top;
+            SetWindowPos(s.hwnd, if s.always_on_top { HWND_TOPMOST } else { -2isize as HWND },
+                0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        CMD_TOGGLE_FOCUS_MODE => { s.focus_mode = !s.focus_mode; }
+        CMD_CYCLE_STATE => { s.anim.set_state(s.anim.state().next()); present(s); }
+        CMD_RESET_POSITION => {
+            let mut work = RECT::default();
+            if SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0) != 0 {
+                let w = s.target.as_ref().map(|t| t.width).unwrap_or(FRAME_W);
+                let h = s.target.as_ref().map(|t| t.height).unwrap_or(FRAME_H);
+                SetWindowPos(s.hwnd, HWND_TOPMOST, work.right - w - 24, work.bottom - h - 24,
+                    0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+        }
+        CMD_SEND_TEST_BUBBLE => {
+            let (bw, bh) = bubble_size();
+            let mut rect = RECT::default(); GetWindowRect(s.hwnd, &mut rect);
+            let mut work = RECT::default();
+            SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0);
+            let (x, y) = compute_bubble_placement(rect.left, rect.top,
+                rect.right-rect.left, rect.bottom-rect.top, bw, bh,
+                work.left, work.top, work.right, work.bottom);
+            SetWindowPos(s.bubble_win.as_ref().unwrap().hwnd, HWND_TOPMOST, x, y, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE);
+            show_bubble(s.bubble_win.as_ref().unwrap(), &BubbleView {
+                title: "Test".into(), status: SessionStatus::NeedsInput,
+                session_id: "test".into(),
+            });
+        }
+        CMD_SHUFFLE_PET | CMD_OPEN_SETTINGS => {
+            // Settings/shuffle are handled by the Host bridge (settings UI);
+            // no-op here — the menu command is still a valid, non-crashing action.
+        }
+        CMD_QUIT => { QUITTING.store(1, Ordering::SeqCst); PostQuitMessage(0); }
+        _ => {}
+    }
+    s.menu_ctx.always_on_top = s.always_on_top;
+    s.menu_ctx.focus_mode = s.focus_mode;
+}
 
 unsafe fn null<T>() -> *const T { std::ptr::null() }
 unsafe fn null_mut<T>() -> *mut T { std::ptr::null_mut() }
@@ -187,9 +243,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: UINT, wp: WPARAM, lp: LPARAM)
             0
         }
         WM_RBUTTONUP => {
-            // Menu layout is available; window painting in 5c.
-            let entries = build_default_menu_entries(true, false);
-            let _layout = compute_menu_layout(&entries);
+            s.menu_ctx.always_on_top = s.always_on_top;
+            s.menu_ctx.focus_mode = s.focus_mode;
+            if let Some(menu) = s.menu.as_ref() {
+                let ctx = &mut s.menu_ctx as *mut MenuCtx;
+                let mut cur = POINT::default();
+                GetCursorPos(&mut cur);
+                let mut work = RECT::default();
+                SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0);
+                // Clamp menu origin into the work area (petdex parity).
+                let (mx, my) = dsh_pet_native::menu::compute_popup_origin(
+                    cur.x, cur.y, menu.width, menu.height,
+                    work.left, work.top, work.right, work.bottom);
+                SetWindowPos(menu.hwnd, HWND_TOPMOST, mx, my, 0, 0,
+                    SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+                show_menu(menu, ctx);
+            }
             0
         }
         WM_DESTROY | WM_CLOSE | WM_QUERYENDSESSION | WM_ENDSESSION => {
@@ -213,8 +282,33 @@ unsafe fn stdin_loop() {
         while let Some(pos) = acc.iter().position(|&b| b == b'\n') {
             let line = String::from_utf8_lossy(&acc[..pos]).trim().to_string();
             acc.drain(..=pos);
-            if let Some(state) = PetState::from_slug(&line) {
-                let s = &mut *STATE;
+            let s = &mut *STATE;
+            if let Some(rest) = line.strip_prefix("bubble:") {
+                // bubble:<status>|<text>  (status: idle|needs-input|running|completed|failed)
+                let (status_str, text) = rest.split_once('|').unwrap_or((rest, ""));
+                let status = match status_str.trim().to_ascii_lowercase().as_str() {
+                    "needs-input" | "waiting" => SessionStatus::NeedsInput,
+                    "running" => SessionStatus::Running,
+                    "completed" | "done" => SessionStatus::Completed,
+                    "failed" | "error" => SessionStatus::Failed,
+                    _ => SessionStatus::Idle,
+                };
+                if let Some(win) = s.bubble_win.as_ref() {
+                    let (bw, bh) = bubble_size();
+                    let mut rect = RECT::default(); GetWindowRect(s.hwnd, &mut rect);
+                    let mut work = RECT::default();
+                    SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut _ as *mut c_void, 0);
+                    let (x, y) = compute_bubble_placement(rect.left, rect.top,
+                        rect.right-rect.left, rect.bottom-rect.top, bw, bh,
+                        work.left, work.top, work.right, work.bottom);
+                    SetWindowPos(win.hwnd, HWND_TOPMOST, x, y, 0, 0,
+                        SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER);
+                    show_bubble(win, &BubbleView {
+                        title: if text.is_empty() { status.summary().to_string() } else { text.to_string() },
+                        status, session_id: String::new(),
+                    });
+                }
+            } else if let Some(state) = PetState::from_slug(&line) {
                 s.anim.set_state(state);
                 present(s);
             }
@@ -254,6 +348,22 @@ fn main() {
         };
         if RegisterClassW(&wc) == 0 { eprintln!("RegisterClassW failed: {}", GetLastError()); return }
 
+        // Register the menu and bubble window classes (petdex UI parity).
+        let menu_cls = wide("DshPetMenuWindow");
+        let wc_menu = WNDCLASSW {
+            style: 0, lpfnWndProc: Some(menu_wndproc), cbClsExtra: 0, cbWndExtra: 8,
+            hInstance: hinst, hIcon: null_mut(), hCursor: null_mut(),
+            hbrBackground: null_mut(), lpszMenuName: null(), lpszClassName: menu_cls.as_ptr(),
+        };
+        RegisterClassW(&wc_menu);
+        let bubble_cls = wide("DshPetBubbleWindow");
+        let wc_bubble = WNDCLASSW {
+            style: 0, lpfnWndProc: Some(bubble_wndproc), cbClsExtra: 0, cbWndExtra: 0,
+            hInstance: hinst, hIcon: null_mut(), hCursor: null_mut(),
+            hbrBackground: null_mut(), lpszMenuName: null(), lpszClassName: bubble_cls.as_ptr(),
+        };
+        RegisterClassW(&wc_bubble);
+
         let fw = FRAME_W * scale / 100;
         let fh = FRAME_H * scale / 100;
         let (mut px, mut py) = (40, 40);
@@ -263,12 +373,21 @@ fn main() {
         }
 
         let target = RenderTarget::new(fw, fh);
+        let menu_layout = compute_menu_layout(&build_default_menu_entries(true, false));
+        let menu_surface = LayeredSurface::create(menu_layout.width, menu_layout.height,
+            menu_cls.as_ptr(), wide("dsh-pet menu").as_ptr(), hinst, 0, 0);
+        let (bw, bh) = bubble_size();
+        let bubble_surface = LayeredSurface::create(bw, bh,
+            bubble_cls.as_ptr(), wide("dsh-pet bubble").as_ptr(), hinst, 0, 0);
         let mut state = AppState {
             hwnd: null_mut(), dragging: false,
             drag_origin: POINT::default(), win_origin: RECT::default(),
             scale, opacity, atlas, target,
             anim: PetAnimationEngine::new(), physics: PetPhysics::new(),
             last_tick: now_ms(), bubbles: Vec::new(),
+            menu: menu_surface, bubble_win: bubble_surface,
+            menu_ctx: MenuCtx { always_on_top: true, focus_mode: false, on_command: on_menu_command },
+            always_on_top: true, focus_mode: false,
         };
         STATE = &mut state as *mut AppState;
 
