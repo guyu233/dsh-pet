@@ -140,6 +140,7 @@ export default class PetRemoteService extends Service {
       this.runningAgents.add(agentKey(payload?.agent))
       this._setSteady('running')
       this._applyState('jumping', TRANSIENT_DWELL_MS.jumping)  // brief start flourish
+      this._bubble('Working on your request', 'running')       // native task card
     })
     // model streaming tokens / step work -> actively running.
     ctx.on('agent/assistant-stream', (payload) => {
@@ -153,7 +154,10 @@ export default class PetRemoteService extends Service {
     })
     ctx.on('agent/turn-stopping', () => { this._setSteady('running') })
 
-    ctx.on('agent/error', () => this._applyState('failed', TRANSIENT_DWELL_MS.failed))
+    ctx.on('agent/error', () => {
+      this._applyState('failed', TRANSIENT_DWELL_MS.failed)
+      this._bubble('Session failed', 'failed')
+    })
     // agent/request-error is a WATERFALL: observe then pass through.
     ctx.on('agent/request-error', (payload, next) => {
       this._applyState('failed', TRANSIENT_DWELL_MS.failed)
@@ -162,6 +166,7 @@ export default class PetRemoteService extends Service {
     // approval/request is a WATERFALL — never short-circuit the user's UI.
     ctx.on('approval/request', (payload, next) => {
       this._setSteady('waiting')
+      this._bubble('Waiting for your input', 'needs-input')
       return next()
     })
     ctx.on('agent/created', (payload) => {
@@ -184,6 +189,7 @@ export default class PetRemoteService extends Service {
         // Only celebrate when the LAST agent went idle.
         this._setSteady('idle')
         this._applyState('waving', TRANSIENT_DWELL_MS.waving)
+        this._bubble('Completed', 'completed')
       }
     })
     ctx.on('loader/volatile-update', () => {
@@ -626,13 +632,15 @@ export default class PetRemoteService extends Service {
     }
   }
 
-  /** Record a short, content-light bubble for the Client UI. The native
-   * renderer only animates sprites; bubbles are shown in the settings/companion
-   * UI so no text rendering is needed in the OS-level window. */
-  _bubble(text) {
-    // Bubbles are UI-only hints; they must not drive the animation state —
-    // that is exclusively the state machine's job.
-    this.lastBubble = { text: String(text).slice(0, 120), at: Date.now() }
+  /** Show a short, content-light bubble. The Rust native renderer now owns a
+   * layered bubble window (petdex parity), so push the text there as well as
+   * keeping it for the settings UI. */
+  _bubble(text, status = 'running') {
+    const safe = String(text).slice(0, 120)
+    this.lastBubble = { text: safe, at: Date.now() }
+    if (this.handle?.stdin) {
+      try { this.handle.stdin.write(`bubble:${status}|${safe}\n`) } catch { /* going away */ }
+    }
   }
 }
 
