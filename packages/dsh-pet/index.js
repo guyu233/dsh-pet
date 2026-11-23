@@ -103,6 +103,7 @@ export default class PetRemoteService extends Service {
     this.lastBubble = { text: '', at: 0 }
     this.downloadProgress = null   // { slug, phase, pct }
     this.lastError = ''            // surfaced in state() for the settings UI
+    this.activeSessionCache = ''   // latest session id from api-session/* events
     // In-memory record of pets downloaded this session. Filesystem reads can
     // lag or be sandboxed; merging this set guarantees a just-downloaded pet
     // immediately appears in the installed list.
@@ -192,6 +193,23 @@ export default class PetRemoteService extends Service {
         this._bubble('Completed', 'completed')
       }
     })
+    // Official DSH session-controller broadcasts (same events forwarded to
+    // the Client over Remote). Use them to keep a fresh active-session hint
+    // instead of relying on repeated list() polling.
+    ctx.on('api-session/added', (summary) => {
+      const id = summary?.sessionId ?? summary?.id
+      if (id) this.activeSessionCache = String(id)
+    })
+    ctx.on('api-session/activity', (sessionId) => {
+      if (sessionId) this.activeSessionCache = String(sessionId)
+    })
+    ctx.on('api-session/status', (sessionId, running) => {
+      if (running && sessionId) this.activeSessionCache = String(sessionId)
+    })
+    ctx.on('api-session/removed', (sessionId) => {
+      if (String(sessionId) === this.activeSessionCache) this.activeSessionCache = ''
+    })
+
     ctx.on('loader/volatile-update', () => {
       const values = this._cfg()
       if (values.enabled) void this._start(); else this._stop()
@@ -552,8 +570,12 @@ export default class PetRemoteService extends Service {
     if (!controller) return null
     const value = await controller.list({}, new AbortController().signal)
     const items = (value?.items ?? []).filter(s => !s.blank && s.agentAvailable !== false)
+    const hint = this.activeSessionCache
     items.sort((a, b) => {
       if (Boolean(a.running) !== Boolean(b.running)) return a.running ? -1 : 1
+      // A session with fresh api-session/* activity wins ties.
+      if (hint && String(a.sessionId) === hint) return -1
+      if (hint && String(b.sessionId) === hint) return 1
       return (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
     })
     if (items.length === 0) return null

@@ -87,6 +87,7 @@ window.__ModuleLoader__.load({
     // read from a render callback. Mount may finish AFTER the Settings view
     // first renders, so notify mounted components to re-render.
     let petNs
+    let clientRemote
     let mountError = ''
     const mountListeners = new Set()
     const notifyMount = () => { for (const fn of mountListeners) fn() }
@@ -101,9 +102,28 @@ window.__ModuleLoader__.load({
       if (!ns || typeof ns.state !== 'function') {
         throw new Error('remote.pet did not mount')
       }
+      clientRemote = remote
       petNs = ns
       mountError = ''
       notifyMount()
+    }
+
+    // DSH forwards these official Host events to every Client over Remote.
+    // Subscribing to them is the documented way to react to session/agent
+    // changes without polling (session-controller.client uses the same keys).
+    const DSH_SESSION_EVENTS = [
+      'api-session/added', 'api-session/removed', 'api-session/status',
+      'api-session/activity', 'api-session/error',
+    ]
+    function useDshEvents(listener, ready) {
+      useEffect(() => {
+        if (!ready || !clientRemote || typeof clientRemote.$on !== 'function') return
+        const offs = DSH_SESSION_EVENTS.map(ev => {
+          try { return clientRemote.$on(ev, () => listener(ev)) || (() => {}) }
+          catch { return () => {} }
+        })
+        return () => { for (const off of offs) { try { off() } catch {} } }
+      }, [listener, ready])
     }
 
     // React hook: re-render whenever the mount state changes.
@@ -228,6 +248,8 @@ window.__ModuleLoader__.load({
         catch (e) { setError(String(e?.message || e)); setStatus(null) }
       }, [])
       useEffect(() => { void refresh() }, [refresh, mount.ready])
+      // Event-driven refresh on official DSH session/agent events.
+      useDshEvents(refresh, mount.ready)
       return { status, error, refresh }
     }
 
@@ -659,25 +681,27 @@ window.__ModuleLoader__.load({
       const mount = useMount()
 
       // Like Codex: automatically follow the active session, no picker.
+      // Official DSH Remote session events trigger an immediate refresh;
+      // the slow interval is only a safety net for missed events.
+      const poll = useCallback(async () => {
+        if (!petNs) return
+        try {
+          const s = ok(await petNs.state())
+          setBubble(s?.lastBubble || '')
+          const a = ok(await petNs.active())
+          const id = a?.sessionId || ''
+          setActiveId(id)
+          const list = ok(await petNs.sessions())
+          setRunning(Boolean((list?.items ?? []).find(x => x.sessionId === id)?.running))
+        } catch { /* keep last values */ }
+      }, [])
       useEffect(() => {
         if (!mount.ready || !petNs) return
-        let alive = true
-        const poll = async () => {
-          try {
-            const s = ok(await petNs.state())
-            if (alive) setBubble(s?.lastBubble || '')
-            const a = ok(await petNs.active())
-            if (alive) {
-              setActiveId(a?.sessionId || '')
-              const list = ok(await petNs.sessions())
-              setRunning(Boolean((list?.items ?? []).find(x => x.sessionId === a?.sessionId)?.running))
-            }
-          } catch { /* keep last values */ }
-        }
         void poll()
-        const id = setInterval(poll, 2000)
-        return () => { alive = false; clearInterval(id) }
-      }, [mount.ready])
+        const timer = setInterval(() => { void poll() }, 8000)
+        return () => clearInterval(timer)
+      }, [mount.ready, poll])
+      useDshEvents(poll, mount.ready)
 
       async function send() {
         if (!text.trim()) return
