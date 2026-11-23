@@ -398,6 +398,9 @@ export default class PetRemoteService extends Service {
       scale: c.scale,
       opacity: c.opacity,
       installed: this._installed(),
+      // Full paths of installed pets, derived from the SAME petDir() used by
+      // download()/start(), so the UI can show exactly where each pet lives.
+      installedPaths: this._installed().map(slug => ({ slug, path: petDir(slug) })),
       nativeMissing: !bin || !existsSync(bin),
       lastBubble: Date.now() - this.lastBubble.at < 10000 ? this.lastBubble.text : '',
       downloadProgress: this.downloadProgress,

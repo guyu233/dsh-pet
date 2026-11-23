@@ -517,11 +517,13 @@ window.__ModuleLoader__.load({
           (pet.status?.installed || []).length === 0
             ? h('div', { style: { color: T.text2, fontSize: 13 } }, t('empty'))
             : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
-              pet.status.installed.map(slug => h(Row, {
-                key: slug,
-                title: slug,
-                hint: slug === pet.status.active ? t('active') : '',
-              },
+              pet.status.installed.map(slug => {
+                const fullPath = (pet.status.installedPaths || []).find(x => x.slug === slug)?.path || ''
+                return h(Row, {
+                  key: slug,
+                  title: slug,
+                  hint: (slug === pet.status.active ? t('active') + ' · ' : '') + fullPath,
+                },
                 h('div', { style: { display: 'flex', gap: 6 } },
                   h(Button, {
                     onClick: () => void usePet(slug),
@@ -533,7 +535,7 @@ window.__ModuleLoader__.load({
                     disabled: !ready || busy === 'uninstall:' + slug || slug === pet.status.active,
                   }, busy === 'uninstall:' + slug ? t('loading') : t('remove')),
                 ),
-              )),
+              )}),
             ),
         ),
 
