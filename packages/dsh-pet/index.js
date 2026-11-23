@@ -12,6 +12,7 @@
  */
 
 import { Service } from '@deepseek-ai/cordis'
+import { defineTool } from '@deepseek-ai/dsh-tools'
 import { bindTypertRemote } from '@deepseek-ai/dsh-typert-protocol'
 import { randomUUID } from 'node:crypto'
 import { homedir, platform as osPlatform, arch as osArch } from 'node:os'
@@ -88,6 +89,8 @@ function asBool(v) {
 
 /** Host Remote service, namespace `pet`. All methods return JSON-safe values. */
 export default class PetRemoteService extends Service {
+  static inject = ['tools']
+
   constructor(ctx, config = {}) {
     super(ctx, 'pet')
     this.config = config
@@ -221,7 +224,68 @@ export default class PetRemoteService extends Service {
       if (this.settleTimer) clearTimeout(this.settleTimer)
       if (this.staleTimer) clearTimeout(this.staleTimer)
     }, 'dsh-pet: pet process and timers cleanup')
+    this._registerTools()
     if (this._cfg().enabled) void this._start()
+  }
+
+  /** Expose the same operations used by the settings UI to the agent.
+   * Tools are optional side effects: registration is owned by this plugin fiber. */
+  _registerTools() {
+    const tools = this.ctx.tools ?? this.ctx.get?.('tools')
+    if (!tools || typeof tools.register !== 'function') return
+    const register = (name, description, parameters, execute) => {
+      tools.register(defineTool({
+        name,
+        description,
+        parameters,
+        output: {
+          schema: { type: 'string' },
+          render: (_args, value) => [{ type: 'text', text: value }],
+        },
+        async execute(args) {
+          try { return String(await execute(args)) }
+          catch (error) { return `error: ${String(error?.message ?? error)}` }
+        },
+      }))
+    }
+
+    const enabledParam = {
+      type: 'boolean', required: true,
+      description: 'Whether the native desk pet process should run.',
+    }
+    register('pet_state', 'Read desk pet status and installed pets.', {}, async () =>
+      JSON.stringify(await this.state()))
+    register('pet_set_enabled', 'Enable or disable the native desk pet.', {
+      enabled: enabledParam,
+    }, async ({ enabled }) => {
+      const c = this._cfg()
+      const result = await this.setConfig(enabled, c.petSlug, c.scale, c.opacity)
+      return JSON.stringify(result)
+    })
+    register('pet_use', 'Select an installed Petdex pet as active and show it.', {
+      slug: { type: 'string', required: true, description: 'Installed Petdex slug.' },
+    }, async ({ slug }) => {
+      const c = this._cfg()
+      const result = await this.setConfig(true, slug, c.scale, c.opacity)
+      return JSON.stringify(result)
+    })
+    register('pet_download', 'Download a Petdex pet into the local pets directory.', {
+      slug: { type: 'string', required: true, description: 'Petdex slug to download.' },
+    }, async ({ slug }) => {
+      const safe = safeSlug(slug)
+      if (!safe) return JSON.stringify({ ok: false, error: 'invalid pet slug' })
+      const spriteUrl = `https://assets.petdex.dev/pets/${safe}/spritesheet.webp`
+      const result = await this.download(safe, spriteUrl, { displayName: safe, kind: 'creature', spriteVersionNumber: 2 })
+      return JSON.stringify(result)
+    })
+    register('pet_uninstall', 'Remove a downloaded pet from the local pets directory.', {
+      slug: { type: 'string', required: true, description: 'Installed Petdex slug to remove. The active pet cannot be removed.' },
+    }, async ({ slug }) => JSON.stringify(this.uninstall(slug)))
+    register('pet_send', 'Send a short message to the active DSH session.', {
+      text: { type: 'string', required: true, description: 'Message text to queue into the active session.' },
+    }, async ({ text }) => JSON.stringify(await this.send('', text)))
+    register('pet_stop', 'Cancel the active turn in the followed DSH session.', {}, async () =>
+      JSON.stringify(await this.stopSession('')))
   }
 
   /** Only the local owner may start processes or write pet files. */
@@ -371,6 +435,7 @@ export default class PetRemoteService extends Service {
   }
 
   async _saveConfig(patch) {
+    const previous = { ...this.overrides }
     Object.assign(this.overrides, patch)
     const entry = this.ctx.fiber?.entry
     const editor = this.ctx.get?.('configEditor')
@@ -379,7 +444,10 @@ export default class PetRemoteService extends Service {
         const current = this._cfg()
         await editor.edit(entry, () => ({ ...current, ...patch }))
       } catch (error) {
+        // Do not leave an in-memory override that failed to persist.
+        this.overrides = previous
         this.ctx.logger.warn('dsh-pet: could not persist config: %s', error?.message ?? error)
+        throw error
       }
     }
   }

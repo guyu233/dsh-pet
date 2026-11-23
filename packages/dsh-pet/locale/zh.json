@@ -1,8 +1,8 @@
 {
   "meta": {
     "title": "桌宠",
-    "description": "会跟随 DeepSeek Harness 会话状态变化的 Petdex 像素桌宠。",
-    "detail": "docs/DETAIL.md"
+    "description": "在“设置 → 桌宠”中下载 Petdex 桌宠、选择已安装桌宠、开关原生悬浮桌宠，并向当前会话发送快捷消息。需要当前平台随包提供原生程序；浏览和下载目录需要访问 petdex.dev。原生窗口只接收归一化动画状态和短状态文本，不会接收提示词、工具参数、模型输出或审批内容。非官方 Petdex 衍生插件。",
+    "detail": "docs/DETAIL.zh.md"
   },
   "pet": {
     "title": "桌宠",

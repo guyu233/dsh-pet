@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Desk pet",
-    "description": "Floating Petdex pixel companions that react to the current DeepSeek Harness session.",
+    "description": "Adds Settings → Desk pet: download pets from the Petdex catalog, choose an installed pet, enable or disable the floating native companion, and send a quick message to the active session. Requires a bundled native binary for your platform and network access to petdex.dev for catalog downloads. The native window receives only normalized animation states and short status text; prompts, tool arguments, model output, and approval contents are never sent to it. Unofficial Petdex-derived plugin.",
     "detail": "docs/DETAIL.md"
   },
   "pet": {

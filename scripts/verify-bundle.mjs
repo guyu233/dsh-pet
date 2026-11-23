@@ -124,6 +124,36 @@ const nativeFiles = (pkg.files ?? []).filter(x => x.startsWith('native/'))
 check(nativeFiles.length > 0 && nativeFiles.some(f => existsSync(join(pkgDir, f))),
   'at least one listed native binary exists on disk')
 
+// DSH plugin-development display compliance (host-plugin.md / plugin-details.md).
+check(typeof en.meta?.title === 'string' && en.meta.title.length > 0, 'en meta.title exists')
+check(typeof zh.meta?.title === 'string' && zh.meta.title.length > 0, 'zh meta.title exists')
+check((en.meta?.description ?? '').length >= 120, 'en meta.description explains usage/limits')
+check((zh.meta?.description ?? '').length >= 80, 'zh meta.description explains usage/limits')
+check(en.meta?.detail === 'docs/DETAIL.md', 'en meta.detail is docs/DETAIL.md')
+check(zh.meta?.detail === 'docs/DETAIL.zh.md', 'zh meta.detail is docs/DETAIL.zh.md')
+for (const p of ['docs/DETAIL.md', 'docs/DETAIL.zh.md', 'docs/preview.svg']) {
+  check(existsSync(join(pkgDir, p)), `display resource exists: ${p}`)
+}
+for (const p of ['docs/DETAIL.md', 'docs/DETAIL.zh.md']) {
+  const body = read(p).trim()
+  check(/^!\[[^\]]+\]\([^)]+\)$/.test(body), `${p} is exactly one image line`)
+}
+const preview = read('docs/preview.svg')
+check(/<svg[^>]+width="640"[^>]+height="300"[^>]+viewBox="0 0 640 300"/.test(preview), 'preview.svg has required 640x300 canvas')
+check(!/<(script|style|text|foreignObject|animate|image)\b/i.test(preview), 'preview.svg is self-contained and text-free')
+check((pkg.files ?? []).includes('docs'), 'package files includes docs directory')
+
+// UI operation parity: settings actions must also be agent tools.
+check(/import\s*\{[^}]*defineTool[^}]*\}\s*from\s*'@deepseek-ai\/dsh-tools'/.test(host), 'Host imports defineTool')
+check(/static inject = \['tools'\]/.test(host), 'Host Service injects tools')
+check(/ctx\.tools\.register|tools\.register\(defineTool/.test(host), 'Host registers tools')
+for (const toolName of ['pet_state', 'pet_set_enabled', 'pet_use', 'pet_download', 'pet_uninstall', 'pet_send', 'pet_stop']) {
+  check(host.includes(`'${toolName}'`) || host.includes(`"${toolName}"`), `agent tool registered: ${toolName}`)
+}
+check(!/require\(['\"](@deepseek-ai\/|dsh-client)/.test(client), 'Client does not require Harness Client packages')
+check((pkg.dsh?.client?.inject ?? []).every(x => !x.includes('conversation') && !x.includes('renderer')),
+  'Client inject is limited to settings UI dependency')
+
 // Event contract: session-level records are NOT on the Cordis bus; only
 // agent/* / approval/* global events reach ctx.on. Waterfall listeners must
 // call next() or they veto downstream behavior (e.g. the approval UI).
