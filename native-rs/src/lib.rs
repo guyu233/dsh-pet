@@ -3,6 +3,7 @@
 
 pub mod core;
 pub mod physics;
+pub mod menu;
 
 pub use core::{
     BubbleEntry, FrameOutput, FrameSpec, PetAnimationEngine, PetState,
