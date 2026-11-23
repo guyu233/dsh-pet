@@ -469,10 +469,13 @@ window.__ModuleLoader__.load({
               disabled: !ready || !!busy,
               label: t('enabled'),
               onChange: (next) => {
-                // Enable/disable must take effect immediately: the switch is
-                // the primary control, not just a draft value behind Save.
+                // Enable/disable must take effect immediately. Fall back to
+                // the Host's active slug / default when local state has not
+                // loaded yet, otherwise an early click sends an empty slug.
+                const slug = petSlug || pet.status?.active || 'boba'
+                setPetSlug(slug)
                 setEnabled(next)
-                void run('toggle', () => petNs.setConfig(next, petSlug, scale, opacity))
+                void run('toggle', () => petNs.setConfig(next, slug, scale, opacity))
               },
             }),
           ),

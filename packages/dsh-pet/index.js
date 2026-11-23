@@ -95,6 +95,8 @@ export default class PetRemoteService extends Service {
     this.handle = null
     this.currentState = 'idle'      // currently displayed animation state
     this.steadyState = 'idle'       // state to revert to after a transient
+    this.runningAgents = new Set()  // per-agent status, so one agent's idle
+                                    // cannot override another agent's running
     this.settleTimer = null
     this.staleTimer = null
     this.generation = 0
@@ -121,14 +123,31 @@ export default class PetRemoteService extends Service {
     // Waterfall listeners (agent/request-error, agent/pre-step,
     // approval/request) MUST call next() or they veto downstream behavior.
 
+    // Stable per-agent key so one agent's status cannot clobber another's.
+    let agentSeq = 0
+    const agentKey = (agent) => {
+      if (!agent) return 'unknown'
+      if (agent.sessionId) return 's:' + String(agent.sessionId)
+      if (agent.id) return 'i:' + String(agent.id)
+      try {
+        if (!agent.__dshPetKey) Object.defineProperty(agent, '__dshPetKey', { value: 'a:' + (++agentSeq) })
+        return agent.__dshPetKey
+      } catch { return 'a:' + (++agentSeq) }
+    }
+
     // turn begins: a user message was claimed by the driver.
-    ctx.on('agent/inbox/claimed', () => {
+    ctx.on('agent/inbox/claimed', (payload) => {
+      this.runningAgents.add(agentKey(payload?.agent))
       this._setSteady('running')
       this._applyState('jumping', TRANSIENT_DWELL_MS.jumping)  // brief start flourish
     })
     // model streaming tokens / step work -> actively running.
-    ctx.on('agent/assistant-stream', () => this._setSteady('running'))
+    ctx.on('agent/assistant-stream', (payload) => {
+      this.runningAgents.add(agentKey(payload?.agent))
+      this._setSteady('running')
+    })
     ctx.on('agent/pre-step', (payload, next) => {
+      this.runningAgents.add(agentKey(payload?.agent))
       this._setSteady('running')
       return next()
     })
@@ -145,11 +164,24 @@ export default class PetRemoteService extends Service {
       this._setSteady('waiting')
       return next()
     })
+    ctx.on('agent/created', (payload) => {
+      // A newly created agent starts idle unless proven otherwise.
+      if (payload?.status === 'running') this.runningAgents.add(agentKey(payload.agent))
+    })
+    ctx.on('agent/disposed', (payload) => this.runningAgents.delete(agentKey(payload.agent)))
     ctx.on('agent/status', (payload) => {
-      // Steady fallback only; do not override a transient celebration/failure.
+      // Track status PER AGENT: with subagents, one agent's `idle` must not
+      // override another agent's still-running state.
+      const key = agentKey(payload?.agent)
       const running = payload?.status === 'running'
-      if (running) this._setSteady('running')
-      else if (!TRANSIENT_STATES.has(this.currentState)) {
+      if (running) this.runningAgents.add(key)
+      else this.runningAgents.delete(key)
+      const anyRunning = this.runningAgents.size > 0
+
+      if (anyRunning) {
+        this._setSteady('running')
+      } else if (!TRANSIENT_STATES.has(this.currentState)) {
+        // Only celebrate when the LAST agent went idle.
         this._setSteady('idle')
         this._applyState('waving', TRANSIENT_DWELL_MS.waving)
       }
@@ -298,9 +330,13 @@ export default class PetRemoteService extends Service {
         graceMs: 1500,
         env: { DSH_PET_PARENT_PID: String(process.pid) },
       })
-      // New process starts at idle in the renderer; push the live state even
-      // if it equals currentState (bypass the dedup guard for a fresh stdin).
-      try { this.handle.stdin.write(`${this.currentState}\n`) } catch { /* going away */ }
+      // New process starts at idle in the renderer. Push the live state:
+      // if any agent is still running, restore `running` instead of idle —
+      // status events are edge-triggered and may not repeat after a restart.
+      const initial = this.runningAgents.size > 0 ? 'running' : this.currentState
+      this.currentState = initial
+      if (this.runningAgents.size > 0) this.steadyState = 'running'
+      try { this.handle.stdin.write(`${initial}\n`) } catch { /* going away */ }
       void this.handle.done.catch(() => {}).finally(() => {
         if (this.generation === myGeneration) this.handle = null
       })
@@ -328,12 +364,19 @@ export default class PetRemoteService extends Service {
     const found = new Set()
     const root = petRoot()
     if (existsSync(root)) {
-      try {
-        for (const name of readdirSync(root)) {
-          if (safeSlug(name) && statSync(join(root, name)).isDirectory()) found.add(name)
-        }
-      } catch (error) {
+      let names = []
+      try { names = readdirSync(root) }
+      catch (error) {
         this.ctx.logger.warn('dsh-pet: could not list pets dir: %s', error?.message ?? error)
+      }
+      // Check each entry independently: one broken symlink or permission
+      // error must not hide every other installed pet.
+      for (const name of names) {
+        if (!safeSlug(name)) continue
+        try {
+          if (statSync(join(root, name)).isDirectory()) found.add(name)
+          else if (this.installedCache.has(name)) found.add(name)
+        } catch { if (this.installedCache.has(name)) found.add(name) }
       }
     }
     // Merge pets downloaded this session (filesystem may be sandboxed/lagging).
@@ -369,7 +412,7 @@ export default class PetRemoteService extends Service {
       const slug = safeSlug(petSlug)
       if (!slug) return { ok: false, error: 'invalid pet slug' }
       await this._saveConfig({
-        enabled: Boolean(enabled),
+        enabled: asBool(enabled),
         petSlug: slug,
         scale: Math.max(50, Math.min(300, Number(scale) || 100)),
         opacity: Math.max(20, Math.min(100, Number(opacity) || 85)),
@@ -572,7 +615,7 @@ export default class PetRemoteService extends Service {
       if (!target) return { ok: false, error: 'no active session to stop' }
       const controller = this._controller()
       if (!controller) return { ok: false, error: 'sessionController is unavailable in this profile' }
-      const value = controller.cancel({ sessionId: target })
+      const value = await controller.cancel({ sessionId: target })
       this._bubble('stopped')
       return { ok: Boolean(value?.accepted), error: value?.accepted ? undefined : 'cancel not accepted' }
     } catch (error) {
