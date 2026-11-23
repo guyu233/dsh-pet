@@ -1,0 +1,23 @@
+[package]
+name = "dsh-pet-native"
+version = "0.2.0"
+edition = "2021"
+description = "Native floating pet renderer for DSH, ported from Petdex (MIT)."
+
+[lib]
+name = "dsh_pet_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dsh-pet"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"      # smallest binary
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+# No external crates: all Win32 FFI is declared by hand to keep the binary tiny.

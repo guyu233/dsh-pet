@@ -11,3 +11,6 @@ dist/
 
 # Local test pets
 .pets-local/
+
+# Rust build artifacts
+native-rs/target/
